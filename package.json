@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "schematized-config": "^0.0.6"
+  },
+  "name": "yayamdb",
+  "version": "0.0.1",
+  "description": "yet another yamlish database",
+  "main": "index.js",
+  "repository": "https://github.com/whacked/yayamdb",
+  "author": "whacked <whacked@users.noreply.github.com>",
+  "license": "MIT"
+}
