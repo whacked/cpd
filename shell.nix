@@ -1,8 +1,11 @@
 { pkgs ? import <nixpkgs> {} }:
 pkgs.mkShell {
   buildInputs = [
-    pkgs.yarn
+    pkgs.gnumake
+    pkgs.jq
+    pkgs.jsonnet
     pkgs.nodejs
+    pkgs.yarn
   ];  # join lists with ++
 
   nativeBuildInputs = [
@@ -13,6 +16,8 @@ pkgs.mkShell {
 
   shellHook = ''
     activate-yarn-env
+
+	alias test='jest --watch'
 
   '' + ''
     echo-shortcuts ${__curPos.file}
