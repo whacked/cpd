@@ -1,0 +1,57 @@
+{
+  "description": "json schema referenced by data in CacheableDataResult",
+  "parents": [],
+  "patternProperties": {
+    "^[a-zA-Z][a-zA-Z0-9]+$": {
+      "type": [
+        "array",
+        "null"
+      ]
+    }
+  },
+  "properties": {
+    "_codecs": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "_keys": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "_schemas": {
+      "patternProperties": {
+        "^[a-zA-Z][a-zA-Z0-9]+$": {
+          "properties": {
+            "items": {
+              "properties": {
+                "properties": {
+                  "type": "object"
+                },
+                "type": {
+                  "description": "schema for a single row, which is an object",
+                  "pattern": "object",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": {
+              "description": "table rows are arrays",
+              "pattern": "array",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "yayam yaml database schema",
+  "type": "object",
+  "version": "2023-02-01"
+}
