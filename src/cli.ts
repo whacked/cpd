@@ -1,13 +1,18 @@
+import * as path from 'path'
 import { JSONSchema7 } from "json-schema"
 import yargs from 'yargs/yargs';
 import { Argv } from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { YayamYamlDatabaseSchema } from './autogen/interfaces/YamlFile'
-import yaml from 'js-yaml'
-import fs from 'fs'
+import * as yaml from 'js-yaml'
+import * as fs from 'fs'
+import Ajv from 'ajv'
 import { isValidYamlFileContent } from './yamlFileApi';
 import { getDatabaseStatistics } from './database-api';
 import { generateSqlForDataTable } from '../tests/util';
+import { deriveSupersetSchema, IndexedSchemaRow, OrderPreservingObject, rollingSchemaDiscoverer } from './schema-tracking';
+import { parseLinesToStructureArray } from './jsonLinesFileApi';
+import { groupBy } from './extlib';
 
 
 export interface IYarguments {
@@ -40,6 +45,10 @@ export class ArgParser<T> {
     readonly argParser: Argv;
     constructor(yargOptions: IYarguments) {
         this.argParser = yargs(hideBin(process.argv)).options(yargOptions as any)
+    }
+
+    showHelp() {
+        return this.argParser.showHelp()
     }
 
     getArgs(): T {

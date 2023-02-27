@@ -1,11 +1,9 @@
 import Ajv from 'ajv'
-import fs from 'fs'
+import * as fs from 'fs'
 import { parse as JSONparse } from 'json-in-order'
-import { JSONSchema7 } from "json-schema"
-import path from 'path'
+import * as path from 'path'
 import { Kind, safeLoad, YAMLNode } from 'yaml-ast-parser'
 import { YayamYamlDatabaseSchema } from './autogen/interfaces/YamlFile'
-import { RowIndex } from './database-api'
 import { ValidationResult } from './definitions'
 import { OrderPreservingObject } from './schema-tracking'
 

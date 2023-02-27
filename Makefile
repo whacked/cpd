@@ -14,3 +14,7 @@ src/autogen/schemas/YamlFile.tagged.schema.json: templates/schemas/YamlFile.tagg
 src/autogen/interfaces/YamlFile.ts: src/autogen/schemas/YamlFile.tagged.schema.json
 	$(call generate_ts_interface, $<, $@)
 
+dist:
+	tsc
+
+.PHONY: dist

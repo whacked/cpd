@@ -1,0 +1,3 @@
+export {
+    getFileStatistics,
+} from './cli'
