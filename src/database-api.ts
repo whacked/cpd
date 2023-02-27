@@ -101,4 +101,4 @@ export function getDatabaseStatistics(validatedDatabase: YayamYamlDatabaseSchema
     return out
 }
 
-export type RowIndex = number
+export type SchemaId = number

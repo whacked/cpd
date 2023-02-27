@@ -14,6 +14,7 @@ src/autogen/schemas/YamlFile.tagged.schema.json: templates/schemas/YamlFile.tagg
 src/autogen/interfaces/YamlFile.ts: src/autogen/schemas/YamlFile.tagged.schema.json
 	$(call generate_ts_interface, $<, $@)
 
+# compile js output for external consumption
 dist:
 	tsc
 

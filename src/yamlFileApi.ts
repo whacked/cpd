@@ -39,17 +39,6 @@ export function isValidYamlFileContent(yamlObject: YayamYamlDatabaseSchema): Val
     return result
 }
 
-export interface RollingSchemaData {
-    schemaLookup: Record<RowIndex, {
-        autoId: number,
-        definition: JSONSchema7
-    }>
-    rowsWithSchema: Array<{
-        schemaId: number
-        originalData: any
-    }>
-}
-
 export function yamlAstToOrderedObjects(yamlAst: YAMLNode): OrderPreservingObject {
     if (yamlAst == null) {
         return null

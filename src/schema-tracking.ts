@@ -1,9 +1,11 @@
-import { RollingSchemaData } from "./yamlFileApi"
+import { SchemaId } from './database-api'
+import { JSONSchema7 } from "json-schema"
 import Ajv from 'ajv'
 import { canonicalize } from "json-canonicalize"
 import { _SCHEMA_TABLE_NAME } from "./definitions"
 // @ts-ignore
 import * as GenerateSchema from 'generate-schema';
+import { groupBy, last } from './extlib'
 
 
 export const ajv = new Ajv({ strict: false })
@@ -67,18 +69,24 @@ export function getDataTableName(orderedSchemaLookup: Map<string, OrderPreservin
 
 export function getOrderedSchemaLookupForDataTable(orderedSchemaLookup: Map<string, OrderPreservingObject>): SchemaMap {
     const finalTableName = getDataTableName(orderedSchemaLookup)
-    const tableSchemaLookup = orderedSchemaLookup.get(_SCHEMA_TABLE_NAME) as SchemaMap
+    const tableSchemaLookup = (orderedSchemaLookup.get(_SCHEMA_TABLE_NAME) ?? new Map()) as SchemaMap
     // this must be an array
     const finalTableSchema = tableSchemaLookup.get(finalTableName) as SchemaMap
-    if (finalTableSchema.get("type") != "array") {
+    if (finalTableSchema == null) {
+        return new Map()
+    } else if (finalTableSchema.get("type") != "array") {
         throw Error("final table schema must define an array")
+    } else {
+        const itemPropertiesSchemaMap = (finalTableSchema.get("items") as SchemaMap).get("properties") as SchemaMap
+        return itemPropertiesSchemaMap
     }
-    const itemPropertiesSchemaMap = (finalTableSchema.get("items") as SchemaMap).get("properties") as SchemaMap
-    return itemPropertiesSchemaMap
 }
 
-// FIXME: move me
 export function discoverSchema(jsObject: any) {
+    // check if jsObject is a Map
+    if (jsObject instanceof Map) {
+        jsObject = Object.fromEntries(jsObject.entries())
+    }
     const schema = GenerateSchema.json(
         jsObject,
     )
@@ -121,6 +129,17 @@ export class TypeTracker {
         }).sort((a, b) => a[0] > b[0] ? -1 : 1)[0][0]
         return mostNumerousType
     }
+}
+
+export interface RollingSchemaData {
+    schemaLookup: Record<SchemaId, {
+        autoSchemaId: number,
+        definition: JSONSchema7
+    }>
+    rowsWithSchema: Array<{
+        schemaId: number
+        originalData: any
+    }>
 }
 
 export function rollingSchemaDiscoverer(rows: Array<any>, orderedSchemaLookup: SchemaMap): RollingSchemaData {
@@ -263,6 +282,70 @@ export function rollingSchemaDiscoverer(rows: Array<any>, orderedSchemaLookup: S
     }
     return {
         ...out,
-        schemaLookup: SchemaTracker.getIdToSchemaMapping(),
+        schemaLookup: Object.fromEntries(
+            Object.entries(SchemaTracker.getIdToSchemaMapping()).map(
+                ([id, schema]) => [id, {
+                    autoSchemaId: parseInt(id),
+                    definition: schema as JSONSchema7
+                }]
+            )
+        ) as Record<string, {
+            autoSchemaId: number,
+            definition: JSONSchema7,
+        }>,
     }
+}
+
+export interface IndexedSchemaRow {
+    indexInData: number,
+    schema: JSONSchema7,
+}
+
+export function deriveSupersetSchema(
+    schemas: Array<JSONSchema7>,
+    keyAcceptanceEvaluator: (
+        key: string,
+        matchingSchemas: Array<IndexedSchemaRow>,
+    ) => boolean = () => true,
+): JSONSchema7 {
+    const out: JSONSchema7 = {
+        type: "object",
+        properties: {},
+    }
+    const schemaTracker: Record<string, Array<IndexedSchemaRow>> = {}
+    for (let i = 0; i < schemas.length; ++i) {
+        const schema = schemas[i]
+        for (const [key, value] of Object.entries(schema.properties ?? {})) {
+            if (schemaTracker[key] == null) {
+                schemaTracker[key] = []
+            }
+            schemaTracker[key].push({
+                indexInData: i,
+                schema: value as JSONSchema7,
+            })
+        }
+    }
+    for (const [key, matchingSchemas] of Object.entries(schemaTracker)) {
+        if (keyAcceptanceEvaluator(key, matchingSchemas)) {
+            out.properties![key] = last(matchingSchemas).schema
+        }
+    }
+
+    return out
+}
+
+export function deriveSupersetSchemaFromRollingSchemaData(
+    rollingSchemaData: RollingSchemaData,
+    minimumRequiredSchemaMatchRatio: number = 0.015,
+): JSONSchema7 {
+    console.log(Object.keys(rollingSchemaData.schemaLookup).length, "SCHEMAS")
+    const groupedSchemas = groupBy(rollingSchemaData.rowsWithSchema, (row) => row.schemaId.toString())
+    const totalRows = rollingSchemaData.rowsWithSchema.length
+    const repeatedlyUsedSchemas: Array<JSONSchema7> = Object.values(rollingSchemaData.schemaLookup).filter((record) => {
+        const schemaId = record.autoSchemaId.toString()
+        const numRowsMatchingSchema = groupedSchemas[schemaId].length
+        return numRowsMatchingSchema / totalRows > minimumRequiredSchemaMatchRatio
+    }).map(x => x.definition)
+    console.log(repeatedlyUsedSchemas.length, "schemas to consider")
+    return deriveSupersetSchema(repeatedlyUsedSchemas)
 }
