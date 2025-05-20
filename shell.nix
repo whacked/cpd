@@ -41,6 +41,7 @@ pkgs.mkShell {
     gomod2nix
     go-jsonschema
     pkgs.check-jsonschema
+    pkgs.mdsh
   ];  # join lists with ++
 
   nativeBuildInputs = [
