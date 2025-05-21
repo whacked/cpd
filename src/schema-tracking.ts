@@ -142,7 +142,11 @@ export interface RollingSchemaData {
     }>
 }
 
-export function rollingSchemaDiscoverer(rows: Array<any>, orderedSchemaLookup: SchemaMap): RollingSchemaData {
+export function rollingSchemaDiscoverer(rows: Array<any>, orderedSchemaLookup?: SchemaMap): RollingSchemaData {
+    if (orderedSchemaLookup == null) {
+        orderedSchemaLookup = new Map<string, OrderPreservingObject>()
+        orderedSchemaLookup.set("data", new Map())
+    }
     const out: RollingSchemaData = {
         schemaLookup: {},
         rowsWithSchema: [],

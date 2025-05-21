@@ -66,6 +66,11 @@ export function isJsonLinesFile(fileName: string): boolean {
     return fileName.endsWith(".jsonl")
 }
 
+export enum FileType {
+    YAML = 'yaml',
+    JsonLines = 'jsonl',
+}
+
 export interface FileStatistics {
     numberOfLines: number,
     modifiedAt: Date,
@@ -73,8 +78,7 @@ export interface FileStatistics {
     fileSize: number,
     fileName: string,
     fileExtension: string,
-    isYamlFile: boolean,
-    isJsonLinesFile: boolean,
+    fileType?: FileType,
 
 }
 
@@ -84,6 +88,11 @@ export function getFileStatistics(filePath: string): FileStatistics {
     const fileExtension = path.extname(filePath)
     const sourceLines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/g)
 
+    let fileType: FileType =
+        isYamlFile(fileName) ? FileType.YAML :
+        isJsonLinesFile(fileName) ? FileType.JsonLines :
+        undefined;
+
     return {
         fileName,
         fileExtension,
@@ -91,8 +100,7 @@ export function getFileStatistics(filePath: string): FileStatistics {
         modifiedAt: stats.mtime,
         createdAt: stats.ctime,
         fileSize: stats.size,
-        isYamlFile: isYamlFile(fileName),
-        isJsonLinesFile: isJsonLinesFile(fileName),
+        fileType: fileType,
     }
 }
 
@@ -145,9 +153,7 @@ export function cliMain(inputArguments?: IYarguments): Promise<any> {
             getFileStatistics(args.inputFile)
         )
         const jsonLineRows = parseLinesToStructureArray(jsonLinesFileSource)
-        const dummyLookup: Map<string, OrderPreservingObject> = new Map()
-        dummyLookup.set("data", new Map())
-        const rollingSchemaData = rollingSchemaDiscoverer(jsonLineRows, dummyLookup)
+        const rollingSchemaData = rollingSchemaDiscoverer(jsonLineRows)
         const supersetSchema = deriveSupersetSchemaFromRollingSchemaData(rollingSchemaData)
         console.log("SUPERSET", supersetSchema)
 
