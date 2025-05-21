@@ -1,7 +1,7 @@
 package codec
 
 import (
-	"github.com/yourusername/yamdb/pkg/types"
+	"fmt"
 )
 
 // Registry manages available codecs

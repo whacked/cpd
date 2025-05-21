@@ -22,3 +22,48 @@ type Schema struct {
     Properties map[string]interface{} `json:"properties"`
     Required   []string              `json:"required,omitempty"`
 }
+
+// ColumnType represents the inferred type of a column
+type ColumnType int
+
+const (
+    TypeString ColumnType = iota
+    TypeInt
+    TypeFloat
+)
+
+// ColumnInfo holds metadata about a column
+type ColumnInfo struct {
+    Name string
+    Type ColumnType
+}
+
+// RecordWithMetadata holds a record and its column information
+type RecordWithMetadata struct {
+    Record  map[string]interface{}
+    Columns []ColumnInfo
+}
+
+// StringToColumnType converts a string type name to ColumnType
+func StringToColumnType(typeStr string) ColumnType {
+    switch typeStr {
+    case "int":
+        return TypeInt
+    case "float":
+        return TypeFloat
+    default:
+        return TypeString
+    }
+}
+
+// ColumnTypeToString converts a ColumnType to its string representation
+func ColumnTypeToString(t ColumnType) string {
+    switch t {
+    case TypeInt:
+        return "int"
+    case TypeFloat:
+        return "float"
+    default:
+        return "string"
+    }
+}
