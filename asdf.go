@@ -13,6 +13,9 @@ import (
     "github.com/santhosh-tekuri/jsonschema/v5"
     "github.com/whacked/yamdb/pkg/types"
     "github.com/whacked/yamdb/pkg/codec"
+    "github.com/olekukonko/tablewriter"
+    "github.com/olekukonko/tablewriter/tw"
+    "bufio"
 )
 
 // ColumnType represents the inferred type of a column
@@ -24,17 +27,237 @@ const (
     TypeFloat
 )
 
-func main() {
-    // Read the YAML file
-    data, err := os.ReadFile("tests/example-1.yaml")
+// formatRecordAsTable formats a record and its metadata as a table row
+func formatRecordAsTable(record types.RecordWithMetadata, index int) []string {
+    // Start with the index
+    row := []string{fmt.Sprintf("%d", index)}
+    
+    // Add each field value, with nil handling
+    for _, col := range record.Columns {
+        val := record.Record[col.Name]
+        if val == nil {
+            row = append(row, "<nil>")
+        } else {
+            // Truncate long values to 20 chars
+            strVal := fmt.Sprintf("%v", val)
+            if len(strVal) > 20 {
+                strVal = strVal[:17] + "..."
+            }
+            row = append(row, strVal)
+        }
+    }
+    return row
+}
+
+// printTableHeader prints the table header with column names and types
+func printTableHeader(columns []types.ColumnInfo) []string {
+    header := []string{"index"}
+    for _, col := range columns {
+        header = append(header, fmt.Sprintf("%s (%s)", col.Name, types.ColumnTypeToString(col.Type)))
+    }
+    return header
+}
+
+// RecordGroup represents a group of records with the same structure
+type RecordGroup struct {
+    Columns []types.ColumnInfo
+    Records []types.RecordWithMetadata
+    StartIndex int
+}
+
+// Global debug flag
+var debugMode = true
+
+func printCompactColumnsInfo(columns []types.ColumnInfo) {
+    names := make([]string, len(columns))
+    for i, col := range columns {
+        names[i] = col.Name
+    }
+    fmt.Printf("%s", strings.Join(names, ","))
+}
+
+// printRecordLine prints a single record in a fixed-width format
+func printRecordLine(index int, record types.RecordWithMetadata, columns []types.ColumnInfo) {
+    // Print index in fixed width
+    fmt.Printf("%4d | ", index)
+    
+    // Print each field value with fixed width
+    for _, col := range columns {
+        val := record.Record[col.Name]
+        var strVal string
+        if val == nil {
+            strVal = "<nil>"
+        } else {
+            strVal = fmt.Sprintf("%v", val)
+            if len(strVal) > 20 {
+                strVal = strVal[:17] + "..."
+            }
+        }
+        // Pad to 20 chars
+        fmt.Printf("%-20s | ", strVal)
+    }
+    printCompactColumnsInfo(columns)
+    fmt.Println()
+}
+
+// printRecordGroup prints a group of records with the same structure
+func printRecordGroup(group *RecordGroup) {
+    if !debugMode {
+        // Original table display code
+        table := tablewriter.NewWriter(os.Stdout)
+        table.Configure(func(cfg *tablewriter.Config) {
+            cfg.Header.Formatting.AutoFormat = tw.Off
+        })
+        
+        // Set up headers
+        headers := make([]any, len(group.Columns)+1)
+        headers[0] = "index"
+        for i, col := range group.Columns {
+            headers[i+1] = fmt.Sprintf("%s (%s)", col.Name, types.ColumnTypeToString(col.Type))
+        }
+        table.Header(headers...)
+
+        // Add rows
+        for i, record := range group.Records {
+            row := make([]string, len(headers))
+            row[0] = fmt.Sprintf("%d", group.StartIndex+i)
+            
+            for j, col := range group.Columns {
+                val := record.Record[col.Name]
+                if val == nil {
+                    row[j+1] = "<nil>"
+                } else {
+                    strVal := fmt.Sprintf("%v", val)
+                    if len(strVal) > 20 {
+                        strVal = strVal[:17] + "..."
+                    }
+                    row[j+1] = strVal
+                }
+            }
+            table.Append(row)
+        }
+        
+        table.Render()
+    } else {
+        // Debug mode: print header
+        fmt.Printf("\n=== Record Group (starting at index %d) ===\n", group.StartIndex)
+        fmt.Printf("INDX | ")
+        for _, col := range group.Columns {
+            fmt.Printf("%-20s | ", col.Name)
+        }
+        fmt.Println()
+        fmt.Println(strings.Repeat("-", 25+len(group.Columns)*23))
+        
+        // Print each record
+        for i, record := range group.Records {
+            printRecordLine(group.StartIndex+i, record, group.Columns)
+        }
+        fmt.Println()
+    }
+}
+
+func ExtractOrderedKeys(input string) ([]string, error) {
+	input = strings.TrimPrefix(strings.TrimSpace(input), "- ")
+
+	dec := json.NewDecoder(strings.NewReader(input))
+
+	t, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := t.(json.Delim); !ok || delim != '{' {
+		return nil, fmt.Errorf("expected '{', got %v", t)
+	}
+
+	var keys []string
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key := t.(string)
+		keys = append(keys, key)
+
+		// skip value
+		_, err = dec.Token()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+
+// parseYamlWithOrder parses YAML while preserving field order
+func parseYamlWithOrder(filename string) (map[string]interface{}, []string, error) {
+    // First pass: parse YAML normally
+    data, err := os.ReadFile(filename)
     if err != nil {
-        log.Fatalf("Error reading file: %v", err)
+        return nil, nil, fmt.Errorf("error reading file: %v", err)
     }
 
-    // Parse YAML
     var result map[string]interface{}
     if err := yaml.Unmarshal(data, &result); err != nil {
-        log.Fatalf("Error parsing YAML: %v", err)
+        return nil, nil, fmt.Errorf("error parsing YAML: %v", err)
+    }
+
+    // Second pass: read file line by line to get data section order
+    file, err := os.Open(filename)
+    if err != nil {
+        return nil, nil, fmt.Errorf("error opening file: %v", err)
+    }
+    defer file.Close()
+
+    scanner := bufio.NewScanner(file)
+    var inDataSection bool
+    var dataLines []string
+    var dataIndent int
+
+    for scanner.Scan() {
+        line := scanner.Text()
+
+        // Remove trailing comments
+        if idx := strings.Index(line, "#"); idx != -1 {
+            line = line[:idx]
+        }
+        trimmed := strings.TrimSpace(line)
+        if trimmed == "" {
+            continue
+        }
+
+        // Find data section
+        if !inDataSection && strings.HasPrefix(line, "data:") {
+            inDataSection = true
+            dataIndent = len(line) - len(strings.TrimLeft(line, " "))
+            continue
+        }
+
+        if inDataSection {
+            indent := len(line) - len(strings.TrimLeft(line, " "))
+            if indent <= dataIndent && trimmed != "" {
+                // End of data section
+                break
+            }
+            if trimmed != "" {
+                dataLines = append(dataLines, line)
+            }
+        }
+    }
+    // Check if we have all the required keys
+    requiredKeys := []string{"_schemas", "_keys", "_codecs"}
+    for _, key := range requiredKeys {
+        if _, ok := result[key]; !ok {
+            return nil, nil, fmt.Errorf("missing required key '%s' in YAML", key)
+        }
+    }
+
+    return result, dataLines, nil
+}
+
+func main() {
+    // Read and parse YAML with order preservation
+    result, dataLines, err := parseYamlWithOrder("tests/example-1.yaml")
+    if err != nil {
+        log.Fatal(err)
     }
 
     // Get the schema
@@ -65,6 +288,7 @@ func main() {
     if err != nil {
         log.Fatalf("Error compiling schema: %v", err)
     }
+    fmt.Println(schema)
 
     // Get the data array
     dataArray, ok := result["data"].([]interface{})
@@ -76,15 +300,55 @@ func main() {
         log.Fatal("Data array is empty")
     }
 
+    // Create table evolution tracker
+    tableEvol := types.NewTableEvolution()
+
     // Process all records
     var recordsWithMeta []types.RecordWithMetadata
-    var firstRecordColumns []types.ColumnInfo
+    var currentGroup *RecordGroup
 
     for recordIndex, rawRecord := range dataArray {
         var recordWithMeta types.RecordWithMetadata
+        var columns []types.ColumnInfo
+
+        dataLine := dataLines[recordIndex]
+        fmt.Println("line: ", dataLine)
+
 
         // Handle different record formats
         switch v := rawRecord.(type) {
+        case map[string]interface{}:
+            // Object case - use order from dataLines
+            record := v
+            columns = make([]types.ColumnInfo, 0, len(v))
+
+            // Get the corresponding data line
+            if recordIndex < len(dataLines) {
+                // Extract field names in order from the line
+                // This is a simplified version - you might need more sophisticated parsing
+                fields, err := ExtractOrderedKeys(dataLine)
+                if err != nil {
+                    log.Printf("Error extracting ordered keys at record %d: %v", recordIndex, err)
+                    continue
+                }
+
+                fmt.Printf("--- ORDERED KEYS: %+v\n", fields)
+
+                for _, field := range fields {
+                    if val, exists := v[field]; exists {
+                        columns = append(columns, types.ColumnInfo{
+                            Name: field,
+                            Type: codec.InferType(val),
+                        })
+                    }
+                }
+            }
+
+            recordWithMeta = types.RecordWithMetadata{
+                Record:  record,
+                Columns: columns,
+            }
+
         case string:
             // CSV string case
             reader := csv.NewReader(strings.NewReader(v))
@@ -96,7 +360,7 @@ func main() {
 
             // Infer types and create record
             record := make(map[string]interface{})
-            columns := make([]types.ColumnInfo, len(fields))
+            columns = make([]types.ColumnInfo, len(fields))
 
             for i, field := range fields {
                 field = strings.TrimSpace(field)
@@ -106,7 +370,7 @@ func main() {
                 // Handle empty or whitespace-only fields as nil
                 if field == "" {
                     value = nil
-                    colType = types.TypeString // null is still considered a string type in schema
+                    colType = types.TypeString
                 } else {
                     // Try to parse as number
                     if matched, _ := regexp.MatchString(`^\d+$`, field); matched {
@@ -125,6 +389,7 @@ func main() {
                 columns[i] = types.ColumnInfo{
                     Name: fmt.Sprintf("field%d", i),
                     Type: colType,
+                    AutoGenerated: true,
                 }
             }
 
@@ -136,7 +401,7 @@ func main() {
         case []interface{}:
             // Array case
             record := make(map[string]interface{})
-            columns := make([]types.ColumnInfo, len(v))
+            columns = make([]types.ColumnInfo, len(v))
 
             for i, val := range v {
                 record[fmt.Sprintf("field%d", i)] = val
@@ -151,85 +416,50 @@ func main() {
                 Columns: columns,
             }
 
-        case map[string]interface{}:
-            // Object case
-            record := v
-            columns := make([]types.ColumnInfo, 0, len(v))
-
-            for k, val := range v {
-                columns = append(columns, types.ColumnInfo{
-                    Name: k,
-                    Type: codec.InferType(val),
-                })
-            }
-
-            recordWithMeta = types.RecordWithMetadata{
-                Record:  record,
-                Columns: columns,
-            }
-
         default:
             log.Printf("Unexpected record type at index %d: %T", recordIndex, v)
             continue
         }
 
-        // Store the first record's columns for reference
-        if recordIndex == 0 {
-            firstRecordColumns = recordWithMeta.Columns
-        }
-
-        recordsWithMeta = append(recordsWithMeta, recordWithMeta)
-    }
-
-    // Print results (limited to 10 lines)
-    fmt.Println("\nInferred Structure (from first record):")
-    fmt.Println("-------------------------------------")
-    for i, col := range firstRecordColumns {
-        if i >= 10 {
-            fmt.Println("... (truncated)")
-            break
-        }
-        fmt.Printf("Column %d: %s (%s)\n", i, col.Name, types.ColumnTypeToString(col.Type))
-    }
-
-    fmt.Printf("\nProcessed %d records\n", len(recordsWithMeta))
-    fmt.Println("\nFirst few records:")
-    fmt.Println("-----------------")
-    
-    // Print first few records
-    for i, recordWithMeta := range recordsWithMeta {
-        if i >= 3 { // Show first 3 records
-            fmt.Println("... (more records)")
-            break
-        }
-        fmt.Printf("\nRecord %d:\n", i+1)
-        lineCount := 0
-        for k, v := range recordWithMeta.Record {
-            if lineCount >= 10 {
-                fmt.Println("... (truncated)")
-                break
+        fmt.Printf("[DEBUG] Current columns: ")
+        for i, col := range columns {
+            if i > 0 {
+                fmt.Print(", ")
             }
-            fmt.Printf("  %s: %v\n", k, v)
-            lineCount++
+            fmt.Printf("%s (%s)", col.Name, types.ColumnTypeToString(col.Type))
+        }
+        fmt.Println()
+
+        // Update table evolution
+        structureChanged := tableEvol.UpdateColumns(columns)
+        
+        // If structure changed or this is the first record, start a new group
+        if structureChanged || currentGroup == nil {
+            fmt.Printf("[INFO] Table structure updated at record %d\n", recordIndex)
+
+            // Print previous group if it exists
+            if currentGroup != nil {
+                printRecordGroup(currentGroup)
+            }
+            
+            // Start new group
+            currentGroup = &RecordGroup{
+                Columns: tableEvol.GetCurrentColumns(),
+                Records: make([]types.RecordWithMetadata, 0),
+                StartIndex: recordIndex,
+            }
         }
 
-        // Validate against schema
-        if err := schema.Validate(recordWithMeta.Record); err != nil {
-            fmt.Printf("  Schema validation failed: %v\n", err)
-        } else {
-            fmt.Println("  Schema validation passed")
-        }
+        // Add record to current group
+        currentGroup.Records = append(currentGroup.Records, recordWithMeta)
+        recordsWithMeta = append(recordsWithMeta, recordWithMeta)
+
+        // Record the structure used for this record
+        tableEvol.RecordStructure(recordIndex, columns)
     }
 
-    // Print JSONL output
-    fmt.Println("\nJSONL Output:")
-    fmt.Println("-------------")
-    for _, recordWithMeta := range recordsWithMeta {
-        jsonl, err := codec.RecordToJSONL(recordWithMeta)
-        if err != nil {
-            fmt.Printf("Error converting record to JSONL: %v\n", err)
-            continue
-        }
-        fmt.Println(jsonl)
+    // Print final group if it exists
+    if currentGroup != nil {
+        printRecordGroup(currentGroup)
     }
 }
