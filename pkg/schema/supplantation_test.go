@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/whacked/yamdb/pkg/codec"
 	"github.com/whacked/yamdb/pkg/testdata"
+	"github.com/whacked/yamdb/pkg/types"
 )
 
 func TestSupplantRecord(t *testing.T) {
@@ -22,8 +24,8 @@ func TestSupplantRecord(t *testing.T) {
 				Values:  make([]interface{}, len(tc.StartSchema)),
 				Columns: tc.StartSchema,
 			}
-			if !reflect.DeepEqual(gotSchema, tc.CombinedRecord.Columns) {
-				t.Errorf("\nExpected schema: %+v\nReceived schema: %+v", tc.CombinedRecord.Columns, gotSchema)
+
+			// Call SupplantRecord with parsed values
 			got, gotSchema, changed, err := SupplantRecord(current, parsed)
 			if err != nil {
 				t.Fatalf("SupplantRecord() error = %v", err)

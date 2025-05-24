@@ -98,11 +98,26 @@ func SupplantRecord(current types.ValuesWithColumns, new types.ValuesWithColumns
 		Columns: newSchema,
 	}
 
-	// Copy values from parsed record to transformed record
-	for i, col := range parsed.Columns {
-		if i < len(transformed.Values) {
-			transformed.Values[i] = parsed.Values[i]
+	// First, copy all values by position for unnamed fields
+	for i := range transformed.Values {
+		if i < len(new.Values) {
+			transformed.Values[i] = new.Values[i]
 		}
+	}
+
+	// Then, override with named fields
+	for i, col := range new.Columns {
+		if col.Name != "" {
+			// Find the position in the schema
+			if pos, ok := name2idx[col.Name]; ok {
+				transformed.Values[pos] = new.Values[i]
+			}
+		}
+	}
+
+	// If we have more values in the new record than in the schema, append them
+	if len(new.Values) > len(transformed.Values) {
+		transformed.Values = append(transformed.Values, new.Values[len(transformed.Values):]...)
 	}
 
 	return transformed, newSchema, changed, nil
