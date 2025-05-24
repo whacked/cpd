@@ -10,8 +10,21 @@ import (
 
 func TestSupplantRecord(t *testing.T) {
 	for i, tc := range testdata.TestSupplantationCases {
-		t.Run(fmt.Sprintf("Case %d: %s", i, tc.name), func(t *testing.T) {
-			got, gotSchema, changed, err := SupplantRecord(tc.StartSchema, tc.InputRecord)
+		t.Run(fmt.Sprintf("Case %d: %s", i, tc.Name), func(t *testing.T) {
+			// Parse the input record first
+			parsed, err := codec.ParseRecordToValuesWithColumns(tc.InputRecord)
+			if err != nil {
+				t.Fatalf("Failed to parse input record: %v", err)
+			}
+
+			// Create current schema from start schema
+			current := types.ValuesWithColumns{
+				Values:  make([]interface{}, len(tc.StartSchema)),
+				Columns: tc.StartSchema,
+			}
+			if !reflect.DeepEqual(gotSchema, tc.CombinedRecord.Columns) {
+				t.Errorf("\nExpected schema: %+v\nReceived schema: %+v", tc.CombinedRecord.Columns, gotSchema)
+			got, gotSchema, changed, err := SupplantRecord(current, parsed)
 			if err != nil {
 				t.Fatalf("SupplantRecord() error = %v", err)
 			}
@@ -22,8 +35,8 @@ func TestSupplantRecord(t *testing.T) {
 			}
 
 			// Check schema
-			if !reflect.DeepEqual(gotSchema, tc.EndSchema) {
-				t.Errorf("\nExpected schema: %+v\nReceived schema: %+v", tc.EndSchema, gotSchema)
+			if !reflect.DeepEqual(gotSchema, tc.CombinedRecord.Columns) {
+				t.Errorf("\nExpected schema: %+v\nReceived schema: %+v", tc.CombinedRecord.Columns, gotSchema)
 			}
 
 			// Check values and columns

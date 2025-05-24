@@ -13,25 +13,19 @@ import (
 // 1. The transformed record that matches the schema
 // 2. The new schema after any supplantation
 // 3. Whether the schema changed
-func SupplantRecord(currentSchema []types.ColumnInfo, record string) (types.ValuesWithColumns, []types.ColumnInfo, bool, error) {
-	// Parse the new record
-	parsed, err := codec.ParseRecordToValuesWithColumns(record)
-	if err != nil {
-		return types.ValuesWithColumns{}, nil, false, fmt.Errorf("failed to parse record: %v", err)
-	}
-
-	// If no current schema, just return the parsed record
-	if len(currentSchema) == 0 {
-		return parsed, parsed.Columns, true, nil
+func SupplantRecord(current types.ValuesWithColumns, new types.ValuesWithColumns) (types.ValuesWithColumns, []types.ColumnInfo, bool, error) {
+	// If no current schema, just return the new record
+	if len(current.Columns) == 0 {
+		return new, new.Columns, true, nil
 	}
 
 	// Create a new schema that will be our result
-	newSchema := make([]types.ColumnInfo, len(currentSchema))
-	copy(newSchema, currentSchema)
+	newSchema := make([]types.ColumnInfo, len(current.Columns))
+	copy(newSchema, current.Columns)
 
 	// Track which positions are auto-generated
 	autoAtPos := make(map[int]bool)
-	for i, col := range currentSchema {
+	for i, col := range current.Columns {
 		if col.Name == "" {
 			autoAtPos[i] = true
 		}
@@ -39,7 +33,7 @@ func SupplantRecord(currentSchema []types.ColumnInfo, record string) (types.Valu
 
 	// Track name to position mapping
 	name2idx := make(map[string]int)
-	for i, col := range currentSchema {
+	for i, col := range current.Columns {
 		if col.Name != "" {
 			name2idx[col.Name] = i
 		}
@@ -51,7 +45,7 @@ func SupplantRecord(currentSchema []types.ColumnInfo, record string) (types.Valu
 	changed := false
 
 	// Process each field in the new record
-	for i, newCol := range parsed.Columns {
+	for i, newCol := range new.Columns {
 		// If we're beyond the current schema width, extend it
 		if i >= len(newSchema) {
 			newSchema = append(newSchema, newCol)
