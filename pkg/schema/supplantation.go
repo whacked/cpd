@@ -1,9 +1,6 @@
 package schema
 
 import (
-	"fmt"
-
-	"github.com/whacked/yamdb/pkg/codec"
 	"github.com/whacked/yamdb/pkg/types"
 )
 
@@ -19,18 +16,6 @@ func SupplantRecord(current types.ValuesWithColumns, new types.ValuesWithColumns
 		return new, new.Columns, true, nil
 	}
 
-	// Create a new schema that will be our result
-	newSchema := make([]types.ColumnInfo, len(current.Columns))
-	copy(newSchema, current.Columns)
-
-	// Track which positions are auto-generated
-	autoAtPos := make(map[int]bool)
-	for i, col := range current.Columns {
-		if col.Name == "" {
-			autoAtPos[i] = true
-		}
-	}
-
 	// Track name to position mapping
 	name2idx := make(map[string]int)
 	for i, col := range current.Columns {
@@ -39,85 +24,87 @@ func SupplantRecord(current types.ValuesWithColumns, new types.ValuesWithColumns
 		}
 	}
 
-	// Track aliases (old auto-generated names to new names)
-	aliases := make(map[string]string)
-
+	// Add any new fields to the mapping
 	changed := false
-
-	// Process each field in the new record
-	for i, newCol := range new.Columns {
-		// If we're beyond the current schema width, extend it
-		if i >= len(newSchema) {
-			newSchema = append(newSchema, newCol)
-			if newCol.Name == "" {
-				autoAtPos[i] = true
-			} else {
-				name2idx[newCol.Name] = i
-			}
-			changed = true
-			continue
-		}
-
-		// Get the current column at this position
-		currCol := &newSchema[i]
-
-		// Case 1: Named field supplanting an auto slot
-		if newCol.Name != "" && autoAtPos[i] {
-			aliases[newCol.Name] = fmt.Sprintf("field%d", i)
-			*currCol = types.ColumnInfo{
-				Name: newCol.Name,
-				Type: promote(currCol.Type, newCol.Type),
-			}
-			autoAtPos[i] = false
-			name2idx[newCol.Name] = i
-			delete(name2idx, fmt.Sprintf("field%d", i))
-			changed = true
-			continue
-		}
-
-		// Case 2: Same named field, maybe different type
-		if newCol.Name != "" && newCol.Name == currCol.Name {
-			newType := promote(currCol.Type, newCol.Type)
-			if newType != currCol.Type {
-				currCol.Type = newType
+	for _, newCol := range new.Columns {
+		if newCol.Name != "" {
+			if _, ok := name2idx[newCol.Name]; !ok {
+				name2idx[newCol.Name] = len(name2idx)
 				changed = true
 			}
-			continue
-		}
-
-		// Case 3: New named field but position taken
-		if newCol.Name != "" && !autoAtPos[i] {
-			// Skip this field - it will be handled by the next record
-			continue
 		}
 	}
 
-	// Transform the values to match the new schema
+	// Build new schema and transformed values in one pass
+	newSchema := make([]types.ColumnInfo, len(new.Columns))
 	transformed := types.ValuesWithColumns{
-		Values:  make([]interface{}, len(newSchema)),
+		Values:  new.Values,
 		Columns: newSchema,
 	}
 
-	// First, copy all values by position for unnamed fields
-	for i := range transformed.Values {
-		if i < len(new.Values) {
-			transformed.Values[i] = new.Values[i]
-		}
-	}
-
-	// Then, override with named fields
+	// Create a map of field names to values from the new record
+	fieldValues := make(map[string]interface{})
 	for i, col := range new.Columns {
 		if col.Name != "" {
-			// Find the position in the schema
-			if pos, ok := name2idx[col.Name]; ok {
-				transformed.Values[pos] = new.Values[i]
-			}
+			fieldValues[col.Name] = new.Values[i]
 		}
 	}
 
-	// If we have more values in the new record than in the schema, append them
-	if len(new.Values) > len(transformed.Values) {
-		transformed.Values = append(transformed.Values, new.Values[len(transformed.Values):]...)
+	colsToProcess := make([]types.ColumnInfo, len(new.Columns))
+	copy(colsToProcess, new.Columns)
+
+	// process named fields first
+	for name, idx := range name2idx {
+		// Find the column info for this field
+		var colInfo types.ColumnInfo
+		for i, col := range colsToProcess {
+			if col.Name == name {
+				colInfo = col
+				colsToProcess[i] = colsToProcess[len(colsToProcess)-1]
+				colsToProcess = colsToProcess[:len(colsToProcess)-1]
+				break
+			}
+		}
+
+		// If we found the column in the new record, use its type
+		if colInfo.Name != "" {
+			// Check if type changed
+			if idx < len(current.Columns) {
+				oldType := current.Columns[idx].Type
+				if promote(oldType, colInfo.Type) != oldType {
+					changed = true
+				}
+			}
+			newSchema[idx] = colInfo
+		} else {
+			// Otherwise use the type from the current schema
+			for _, col := range current.Columns {
+				if col.Name == name {
+					newSchema[idx] = col
+					break
+				}
+			}
+		}
+
+		// Route the value
+		if val, ok := fieldValues[name]; ok {
+			transformed.Values[idx] = val
+		}
+	}
+
+	// process unnamed fields next
+	for i, col := range colsToProcess {
+		if i < len(current.Columns) {
+			currentCol := current.Columns[i]
+			newType := promote(currentCol.Type, col.Type)
+			if newType != currentCol.Type {
+				changed = true
+			}
+			newSchema[i] = types.ColumnInfo{Name: currentCol.Name, Type: newType}
+		} else {
+			newSchema[i] = col
+			changed = true // New unnamed field added
+		}
 	}
 
 	return transformed, newSchema, changed, nil

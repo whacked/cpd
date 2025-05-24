@@ -322,7 +322,7 @@ var TestSupplantationCases = []TestSupplantation{
 			Columns: []types.ColumnInfo{
 				{Name: "category", Type: types.TypeString},
 				{Name: "water", Type: types.TypeString},
-				{Name: "yield.grams", Type: types.TypeFloat},
+				{Name: "yield.grams", Type: types.TypeString},
 				{Name: "", Type: types.TypeString},
 				{Name: "", Type: types.TypeString},
 			},
