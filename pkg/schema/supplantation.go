@@ -36,20 +36,22 @@ func SupplantRecord(current types.ValuesWithColumns, new types.ValuesWithColumns
 	}
 
 	// Build new schema and transformed values in one pass
-	newSchema := make([]types.ColumnInfo, max(len(new.Columns), len(current.Columns)))
+	newLength := max(len(new.Columns), len(name2idx))
+	newValues := make([]interface{}, newLength)
+	newSchema := make([]types.ColumnInfo, newLength)
 	transformed := types.ValuesWithColumns{
-		Values:  new.Values,
+		Values:  newValues,
 		Columns: newSchema,
-	}
-
-	if len(transformed.Values) < len(newSchema) {
-		transformed.Values = append(transformed.Values, make([]interface{}, len(newSchema)-len(transformed.Values))...)
 	}
 
 	// Create a map of field names to values from the new record
 	fieldValues := make(map[string]interface{})
 	for i, col := range new.Columns {
-		if col.Name != "" {
+		if col.Name == "" {
+			// populate unnamed fields by position
+			newValues[i] = new.Values[i]
+			newSchema[i] = col
+		} else {
 			fieldValues[col.Name] = new.Values[i]
 		}
 	}
