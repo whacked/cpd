@@ -30,35 +30,11 @@ func NewReader(r io.Reader, opts ...yamdbio.ReaderOption) (yamdbio.Reader, error
 
 // Read implements our custom record reader interface
 func (r *jsonlReader) Read() (types.Record, error) {
-	var inMultiLineComment bool
-
 	// Read next data line
 	for r.scanner.Scan() {
 		line := r.scanner.Text()
 
-		// Handle multi-line comments
-		if inMultiLineComment {
-			if idx := strings.Index(line, "*/"); idx != -1 {
-				// End of multi-line comment
-				inMultiLineComment = false
-				line = line[idx+2:] // Skip the closing */
-			} else {
-				continue // Skip entire line if still in multi-line comment
-			}
-		}
-
-		// Check for start of multi-line comment
-		if idx := strings.Index(line, "/*"); idx != -1 {
-			inMultiLineComment = true
-			line = line[:idx] // Keep only the part before the comment
-			if endIdx := strings.Index(line, "*/"); endIdx != -1 {
-				// Comment ends on same line
-				inMultiLineComment = false
-				line = line[:idx] + line[endIdx+2:]
-			}
-		}
-
-		// Handle single-line comments
+		// Handle single-line comments (both at start and trailing)
 		if idx := strings.Index(line, "//"); idx != -1 {
 			line = line[:idx]
 		}

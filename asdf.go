@@ -587,6 +587,22 @@ func runJsonlDemo() {
 
 		i++
 	}
+
+	// Output final processed history as JSONL
+	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
+	fmt.Printf("Final Processed History (JSONL):\n")
+	fmt.Printf("%s\n", strings.Repeat("-", 80))
+	for _, record := range processor.RecordHistory {
+		// Remove special fields for output
+		outputRecord := make(map[string]interface{})
+		for k, v := range record {
+			if !strings.HasPrefix(k, "_") {
+				outputRecord[k] = v
+			}
+		}
+		jsonBytes, _ := json.Marshal(outputRecord)
+		fmt.Println(string(jsonBytes))
+	}
 }
 
 func main() {

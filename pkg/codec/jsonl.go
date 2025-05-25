@@ -296,7 +296,7 @@ type JSONLProcessor struct {
 	// Category processors
 	categoryProcessors []CategoryProcessor
 	// Record history for lookback operations
-	recordHistory []types.Record
+	RecordHistory []types.Record
 	currentIndex  int
 }
 
@@ -304,7 +304,7 @@ type JSONLProcessor struct {
 func NewJSONLProcessor() *JSONLProcessor {
 	processor := &JSONLProcessor{
 		Meta:          make(map[string]interface{}),
-		recordHistory: make([]types.Record, 0),
+		RecordHistory: make([]types.Record, 0),
 		currentIndex:  -1,
 	}
 
@@ -355,11 +355,11 @@ func (p *JSONLProcessor) processCategories(record types.Record) error {
 // offset: 0 is current record, -1 is previous, -2 is two back, etc.
 func (p *JSONLProcessor) GetRecordAt(offset int) (types.Record, error) {
 	targetIndex := p.currentIndex + offset
-	if targetIndex < 0 || targetIndex >= len(p.recordHistory) {
+	if targetIndex < 0 || targetIndex >= len(p.RecordHistory) {
 		return nil, fmt.Errorf("no record at offset %d (current: %d, history: %d)",
-			offset, p.currentIndex, len(p.recordHistory))
+			offset, p.currentIndex, len(p.RecordHistory))
 	}
-	return p.recordHistory[targetIndex], nil
+	return p.RecordHistory[targetIndex], nil
 }
 
 // MergeCategoryProcessor handles the @merge category
@@ -388,24 +388,24 @@ func (p *MergeCategoryProcessor) Process(record types.Record) error {
 
 	// Then overlay with current record's fields
 	for k, v := range record {
-		// Skip special fields and category
-		if strings.HasPrefix(k, "_") || k == "category" {
+		// Skip special fields, category, and timestamp
+		if strings.HasPrefix(k, "_") || k == "category" || k == "timestamp" {
 			continue
 		}
 		merged[k] = v
 	}
 
 	// Update the previous record with merged data
-	p.processor.recordHistory[p.processor.currentIndex-1] = merged
+	p.processor.RecordHistory[p.processor.currentIndex-1] = merged
 
 	// Remove the current record from history (it's been swallowed)
-	p.processor.recordHistory = p.processor.recordHistory[:p.processor.currentIndex]
+	p.processor.RecordHistory = p.processor.RecordHistory[:p.processor.currentIndex]
 	p.processor.currentIndex--
 
 	fmt.Printf("[DEBUG] Merged record at index %d: %v\n",
 		p.processor.currentIndex, merged)
 	fmt.Printf("[DEBUG] Current record swallowed, history length now: %d\n",
-		len(p.processor.recordHistory))
+		len(p.processor.RecordHistory))
 	return nil
 }
 
@@ -457,9 +457,24 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 		}
 	}
 
-	// Add record to history BEFORE processing categories
-	p.recordHistory = append(p.recordHistory, record)
-	p.currentIndex = len(p.recordHistory) - 1
+	// Check if record has any non-special fields
+	hasData := false
+	for k := range record {
+		if !strings.HasPrefix(k, "_") {
+			hasData = true
+			break
+		}
+	}
+
+	// Only add to history if it has data
+	if hasData {
+		// Add record to history BEFORE processing categories
+		p.RecordHistory = append(p.RecordHistory, record)
+		p.currentIndex = len(p.RecordHistory) - 1
+		fmt.Printf("[DEBUG] Added record to history (length: %d)\n", len(p.RecordHistory))
+	} else {
+		fmt.Printf("[DEBUG] Skipping empty record (only special fields)\n")
+	}
 
 	// Process any special categories
 	if err := p.processCategories(record); err != nil {
@@ -467,7 +482,7 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 	}
 
 	// If this is a data record (not just special fields), add it to the result
-	if len(record) > 0 {
+	if hasData {
 		// Remove special fields from the plainData record
 		plainData := make(map[string]interface{})
 		for k, v := range record {
