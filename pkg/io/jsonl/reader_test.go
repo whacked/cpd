@@ -3,7 +3,7 @@ package jsonl
 import (
 	"strings"
 	"testing"
-	"github.com/yourusername/yamdb/pkg/types"
+	"github.com/whacked/yamdb/pkg/types"
 )
 
 func TestJSONLReader_Read(t *testing.T) {

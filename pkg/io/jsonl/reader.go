@@ -2,8 +2,8 @@ package jsonl
 
 import (
     "encoding/json"
-    "github.com/yourusername/yamdb/pkg/types"
-    "github.com/yourusername/yamdb/pkg/io"
+    "github.com/whacked/yamdb/pkg/types"
+    "github.com/whacked/yamdb/pkg/io"
 )
 
 type jsonlReader struct {

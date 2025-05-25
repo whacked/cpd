@@ -2,7 +2,7 @@ package io
 
 import (
 	"testing"
-	"github.com/yourusername/yamdb/pkg/types"
+	"github.com/whacked/yamdb/pkg/types"
 )
 
 func TestReader_Read(t *testing.T) {

@@ -3,8 +3,8 @@ package sqlite
 import (
     "database/sql"
     "github.com/mattn/go-sqlite3"
-    "github.com/yourusername/yamdb/pkg/types"
-    "github.com/yourusername/yamdb/pkg/io"
+    "github.com/whacked/yamdb/pkg/types"
+    "github.com/whacked/yamdb/pkg/io"
 )
 
 type sqliteReader struct {

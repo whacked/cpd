@@ -2,8 +2,8 @@ package yaml
 
 import (
     "gopkg.in/yaml.v3"
-    "github.com/yourusername/yamdb/pkg/types"
-    "github.com/yourusername/yamdb/pkg/io"
+    "github.com/whacked/yamdb/pkg/types"
+    "github.com/whacked/yamdb/pkg/io"
 )
 
 type yamlReader struct {

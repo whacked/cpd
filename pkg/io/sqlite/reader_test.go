@@ -2,7 +2,7 @@ package sqlite
 
 import (
 	"testing"
-	"github.com/yourusername/yamdb/pkg/types"
+	"github.com/whacked/yamdb/pkg/types"
 )
 
 func TestSQLiteReader_Read(t *testing.T) {

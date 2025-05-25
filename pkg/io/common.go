@@ -2,7 +2,7 @@ package io
 
 import (
     "io"
-    "github.com/yourusername/yamdb/pkg/types"
+    "github.com/whacked/yamdb/pkg/types"
 )
 
 // Reader defines the interface for reading data from any supported format
