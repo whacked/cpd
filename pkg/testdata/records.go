@@ -408,7 +408,7 @@ var TestSupplantationCases = []TestSupplantation{
 		},
 	},
 	{ // case 9
-		Name: "inherited schema longer than incoming named record",
+		Name: "incoming named record longer than inherited schema",
 		StartSchema: []types.ColumnInfo{
 			{Name: "category", Type: types.TypeString},
 			{Name: "count", Type: types.TypeFloat},
@@ -425,6 +425,27 @@ var TestSupplantationCases = []TestSupplantation{
 				{Name: "water.temperature", Type: types.TypeString},
 				{Name: "yield.grams", Type: types.TypeFloat},
 				{Name: "price", Type: types.TypeString},
+			},
+		},
+	},
+	{ // case 10
+		Name: "inherited schema longer than incoming named record",
+		StartSchema: []types.ColumnInfo{
+			{Name: "", Type: types.TypeString},
+			{Name: "", Type: types.TypeFloat},
+			{Name: "", Type: types.TypeString},
+			{Name: "", Type: types.TypeString},
+			{Name: "", Type: types.TypeString},
+		},
+		InputRecord: TestRecords[3].Input,
+		CombinedRecord: types.ValuesWithColumns{
+			Values: []interface{}{"milk", "100g", 120.0, nil, nil},
+			Columns: []types.ColumnInfo{
+				{Name: "category", Type: types.TypeString},
+				{Name: "water", Type: types.TypeString},
+				{Name: "yield.grams", Type: types.TypeString},
+				{Name: "", Type: types.TypeString},
+				{Name: "", Type: types.TypeString},
 			},
 		},
 	},

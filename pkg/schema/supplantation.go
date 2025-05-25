@@ -36,7 +36,7 @@ func SupplantRecord(current types.ValuesWithColumns, new types.ValuesWithColumns
 	}
 
 	// Build new schema and transformed values in one pass
-	newLength := max(len(new.Columns), len(name2idx))
+	newLength := max(len(name2idx), len(new.Columns), len(current.Columns))
 	newValues := make([]interface{}, newLength)
 	newSchema := make([]types.ColumnInfo, newLength)
 	transformed := types.ValuesWithColumns{
@@ -77,7 +77,9 @@ func SupplantRecord(current types.ValuesWithColumns, new types.ValuesWithColumns
 			// Check if type changed
 			if idx < len(current.Columns) {
 				oldType := current.Columns[idx].Type
-				if promote(oldType, colInfo.Type) != oldType {
+				maybeNewType := promote(oldType, colInfo.Type)
+				if maybeNewType != colInfo.Type {
+					colInfo.Type = maybeNewType
 					changed = true
 				}
 			}
