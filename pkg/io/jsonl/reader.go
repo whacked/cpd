@@ -30,18 +30,53 @@ func NewReader(r io.Reader, opts ...yamdbio.ReaderOption) (yamdbio.Reader, error
 
 // Read implements our custom record reader interface
 func (r *jsonlReader) Read() (types.Record, error) {
+	var inMultiLineComment bool
+
 	// Read next data line
 	for r.scanner.Scan() {
-		line := strings.TrimSpace(r.scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue // skip blank or comment lines
+		line := r.scanner.Text()
+
+		// Handle multi-line comments
+		if inMultiLineComment {
+			if idx := strings.Index(line, "*/"); idx != -1 {
+				// End of multi-line comment
+				inMultiLineComment = false
+				line = line[idx+2:] // Skip the closing */
+			} else {
+				continue // Skip entire line if still in multi-line comment
+			}
 		}
+
+		// Check for start of multi-line comment
+		if idx := strings.Index(line, "/*"); idx != -1 {
+			inMultiLineComment = true
+			line = line[:idx] // Keep only the part before the comment
+			if endIdx := strings.Index(line, "*/"); endIdx != -1 {
+				// Comment ends on same line
+				inMultiLineComment = false
+				line = line[:idx] + line[endIdx+2:]
+			}
+		}
+
+		// Handle single-line comments
+		if idx := strings.Index(line, "//"); idx != -1 {
+			line = line[:idx]
+		}
+
+		// Trim whitespace and skip empty lines
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Parse the record
 		var record types.Record
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			return nil, fmt.Errorf("failed to decode record: %w (line: %q)", err, line)
 		}
 		return record, nil
 	}
+
 	if err := r.scanner.Err(); err != nil {
 		return nil, err
 	}

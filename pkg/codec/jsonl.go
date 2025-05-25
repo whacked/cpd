@@ -295,17 +295,29 @@ type JSONLProcessor struct {
 	Meta      map[string]interface{}
 	// Category processors
 	categoryProcessors []CategoryProcessor
+	// Record history for lookback operations
+	recordHistory []types.Record
+	currentIndex  int
 }
 
 // NewJSONLProcessor creates a new JSONL processor
 func NewJSONLProcessor() *JSONLProcessor {
-	return &JSONLProcessor{
-		Meta: make(map[string]interface{}),
-		categoryProcessors: []CategoryProcessor{
-			&MergeCategoryProcessor{},
-			// Add more category processors here
-		},
+	processor := &JSONLProcessor{
+		Meta:          make(map[string]interface{}),
+		recordHistory: make([]types.Record, 0),
+		currentIndex:  -1,
 	}
+
+	// Create and initialize category processors
+	mergeProcessor := &MergeCategoryProcessor{
+		processor: processor,
+	}
+	processor.categoryProcessors = []CategoryProcessor{
+		mergeProcessor,
+		// Add more category processors here
+	}
+
+	return processor
 }
 
 // RegisterCategoryProcessor adds a new category processor
@@ -339,16 +351,61 @@ func (p *JSONLProcessor) processCategories(record types.Record) error {
 	return nil
 }
 
+// GetRecordAt returns the record at the specified index relative to current
+// offset: 0 is current record, -1 is previous, -2 is two back, etc.
+func (p *JSONLProcessor) GetRecordAt(offset int) (types.Record, error) {
+	targetIndex := p.currentIndex + offset
+	if targetIndex < 0 || targetIndex >= len(p.recordHistory) {
+		return nil, fmt.Errorf("no record at offset %d (current: %d, history: %d)",
+			offset, p.currentIndex, len(p.recordHistory))
+	}
+	return p.recordHistory[targetIndex], nil
+}
+
 // MergeCategoryProcessor handles the @merge category
-type MergeCategoryProcessor struct{}
+type MergeCategoryProcessor struct {
+	processor *JSONLProcessor // Reference to parent processor
+}
 
 func (p *MergeCategoryProcessor) Category() string {
 	return "@merge"
 }
 
 func (p *MergeCategoryProcessor) Process(record types.Record) error {
-	// TODO: Implement merge logic
-	fmt.Printf("[DEBUG] Processing merge for record: %v\n", record)
+	// Get previous record
+	prevRecord, err := p.processor.GetRecordAt(-1)
+	if err != nil {
+		return fmt.Errorf("no previous record to merge with: %w", err)
+	}
+
+	// Create a new record by merging previous into current
+	merged := make(types.Record)
+
+	// First copy all fields from previous record
+	for k, v := range prevRecord {
+		merged[k] = v
+	}
+
+	// Then overlay with current record's fields
+	for k, v := range record {
+		// Skip special fields and category
+		if strings.HasPrefix(k, "_") || k == "category" {
+			continue
+		}
+		merged[k] = v
+	}
+
+	// Update the previous record with merged data
+	p.processor.recordHistory[p.processor.currentIndex-1] = merged
+
+	// Remove the current record from history (it's been swallowed)
+	p.processor.recordHistory = p.processor.recordHistory[:p.processor.currentIndex]
+	p.processor.currentIndex--
+
+	fmt.Printf("[DEBUG] Merged record at index %d: %v\n",
+		p.processor.currentIndex, merged)
+	fmt.Printf("[DEBUG] Current record swallowed, history length now: %d\n",
+		len(p.processor.recordHistory))
 	return nil
 }
 
@@ -400,6 +457,10 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 		}
 	}
 
+	// Add record to history BEFORE processing categories
+	p.recordHistory = append(p.recordHistory, record)
+	p.currentIndex = len(p.recordHistory) - 1
+
 	// Process any special categories
 	if err := p.processCategories(record); err != nil {
 		return nil, err
@@ -422,15 +483,10 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 				fmt.Printf("\n[DEBUG] Validating record [%v]\n", plainData)
 
 				// Validate the record
-				dataBytes, err := json.Marshal(plainData)
-				if err != nil {
-					fmt.Printf("[WARN] Failed to marshal record for validation: %v\n", err)
+				if err := p.validator.Validate(plainData); err != nil {
+					fmt.Printf("[WARN] Record validation failed: %v\n", err)
 				} else {
-					if err := p.validator.Validate(string(dataBytes)); err != nil {
-						fmt.Printf("[WARN] Record validation failed: %v\n", err)
-					} else {
-						fmt.Printf("[DEBUG] Record validated successfully\n")
-					}
+					fmt.Printf("[DEBUG] Record validated successfully\n")
 				}
 			}
 		} else {
