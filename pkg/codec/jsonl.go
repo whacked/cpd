@@ -6,15 +6,17 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/whacked/yamdb/pkg/types"
 )
 
 // ProcessedRecord represents the result of processing a JSONL record
 type ProcessedRecord struct {
 	Version *int
-	Schema  []types.ColumnInfo
+	Schema  interface{} // Raw JSON Schema object
 	Meta    map[string]interface{}
-	Data    *types.Record // if it's a data row
+	// Data    *types.Record // if it's a data row
+	Data *map[string]interface{}
 }
 
 // RecordToJSONL converts a RecordWithMetadata to a JSONL string, only including the record data
@@ -279,9 +281,10 @@ func ProcessJSONLRecord(r types.Record) (*JSONLProcessResult, error) {
 
 // JSONLProcessor handles processing of JSONL records with state tracking
 type JSONLProcessor struct {
-	Version int
-	Schema  []types.ColumnInfo
-	Meta    map[string]interface{}
+	Version   int
+	Schema    interface{}        // Raw JSON Schema object
+	validator *jsonschema.Schema // Cached validator
+	Meta      map[string]interface{}
 }
 
 // NewJSONLProcessor creates a new JSONL processor
@@ -309,14 +312,23 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 	}
 
 	if schema, ok := record["_schema"]; ok {
-		// Parse schema into column info
-		cols, err := ParseSchemaObject(schema)
+		// Store the raw schema object
+		p.Schema = schema
+		result.Schema = schema
+
+		// Create and cache the validator
+		schemaBytes, err := json.Marshal(schema)
 		if err != nil {
-			return nil, fmt.Errorf("invalid schema: %w", err)
+			fmt.Printf("[WARN] Failed to create JSON Schema: %v\n", err)
+		} else {
+			validator, err := jsonschema.CompileString("schema.json", string(schemaBytes))
+			if err != nil {
+				fmt.Printf("[WARN] Failed to compile JSON Schema: %v\n", err)
+			} else {
+				p.validator = validator
+				fmt.Printf("[DEBUG] Updated schema and cached validator\n")
+			}
 		}
-		p.Schema = cols
-		result.Schema = cols
-		fmt.Printf("[DEBUG] Updated schema with %d columns\n", len(cols))
 	}
 
 	if meta, ok := record["_meta"]; ok {
@@ -332,15 +344,29 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 
 	// If this is a data record (not just special fields), add it to the result
 	if len(record) > 0 {
-		// Remove special fields from the data record
-		data := make(types.Record)
+		// Remove special fields from the plainData record
+		plainData := make(map[string]interface{})
 		for k, v := range record {
 			if !strings.HasPrefix(k, "_") {
-				data[k] = v
+				plainData[k] = v
 			}
 		}
-		if len(data) > 0 {
-			result.Data = &data
+		if len(plainData) > 0 {
+			result.Data = &plainData
+
+			// Validate against schema if we have one
+			if p.validator != nil {
+				fmt.Printf("\n[DEBUG] Validating record [%v]\n", plainData)
+
+				// Validate the record
+				if err := p.validator.Validate(plainData); err != nil {
+					fmt.Printf("[WARN] Record validation failed: %v\n", err)
+				} else {
+					fmt.Printf("[DEBUG] Record validated successfully\n")
+				}
+			}
+		} else {
+			fmt.Printf("[DEBUG] Skipping validation for directive-only record\n")
 		}
 	}
 

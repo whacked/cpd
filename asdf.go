@@ -555,13 +555,11 @@ func runJsonlDemo() {
 
 		if result.Schema != nil {
 			fmt.Printf("\nSchema Update:\n")
-			for _, col := range result.Schema {
-				fmt.Printf("  %s (%s)\n", col.Name, types.ColumnTypeToString(col.Type))
-			}
+			schemaBytes, _ := json.MarshalIndent(result.Schema, "  ", "  ")
+			fmt.Printf("%s\n", string(schemaBytes))
 			fmt.Printf("\nCurrent Schema:\n")
-			for _, col := range processor.Schema {
-				fmt.Printf("  %s (%s)\n", col.Name, types.ColumnTypeToString(col.Type))
-			}
+			currentSchemaBytes, _ := json.MarshalIndent(processor.Schema, "  ", "  ")
+			fmt.Printf("%s\n", string(currentSchemaBytes))
 		}
 
 		if result.Meta != nil {
@@ -579,8 +577,8 @@ func runJsonlDemo() {
 			fmt.Printf("%s\n", string(dataBytes))
 			fmt.Printf("\nApplied State:\n")
 			fmt.Printf("  Version: %d\n", *result.Version)
-			if len(result.Schema) > 0 {
-				fmt.Printf("  Schema: %d columns\n", len(result.Schema))
+			if result.Schema != nil {
+				fmt.Printf("  Schema: present\n")
 			}
 			if len(result.Meta) > 0 {
 				fmt.Printf("  Meta: %d fields\n", len(result.Meta))
