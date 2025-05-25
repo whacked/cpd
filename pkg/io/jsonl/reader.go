@@ -34,14 +34,11 @@ func (r *jsonlReader) Read() (types.Record, error) {
 	for r.scanner.Scan() {
 		line := r.scanner.Text()
 
-		// Handle single-line comments (both at start and trailing)
-		if idx := strings.Index(line, "//"); idx != -1 {
-			line = line[:idx]
-		}
-
-		// Trim whitespace and skip empty lines
+		// Trim whitespace
 		line = strings.TrimSpace(line)
-		if line == "" {
+
+		// Skip empty lines and comment-only lines
+		if line == "" || strings.HasPrefix(line, "//") {
 			continue
 		}
 

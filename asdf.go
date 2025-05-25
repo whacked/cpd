@@ -500,9 +500,9 @@ func runYamlDemo() {
 	codec.PrintRecordGroupAsJSONL(group)
 }
 
-func runJsonlDemo() {
+func runJsonlDemo(filepath string) {
 	// Open the JSONL file
-	file, err := os.Open("tests/example-2.jsonl")
+	file, err := os.Open(filepath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -608,5 +608,18 @@ func runJsonlDemo() {
 func main() {
 	// runYamlDemo()
 
-	runJsonlDemo()
+	// Get filepath from args or use default
+	filepath := "tests/example-2.jsonl"
+	if len(os.Args) > 1 {
+		lastArg := os.Args[len(os.Args)-1]
+		if strings.HasSuffix(lastArg, ".jsonl") {
+			// Check if file exists
+			if _, err := os.Stat(lastArg); err != nil {
+				fmt.Printf("Error: file %s not found\n", lastArg)
+				os.Exit(1)
+			}
+			filepath = lastArg
+		}
+	}
+	runJsonlDemo(filepath)
 }
