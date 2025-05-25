@@ -1,0 +1,76 @@
+_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: ["category", "water", "yield.grams"]
+      properties:
+        category:
+          # no enum = auto-detect into index depending on frequency
+          type: string
+        "yield.grams":
+          type: number
+        water:
+          type: [ "string", "null" ]
+          pattern: ^\d+g$
+        roast:
+          type: string
+          enum: [ "light", "medium", "dark" ]
+        origin:
+          type: string
+_keys:
+  # foreign key table
+
+_codecs:
+  _:
+    category: toLowerCase
+  data:
+    origin: toCapitalCase
+    water: toNumber
+
+
+id_example:
+  - {text: "first, index is 0 but auto-id is 1"}
+  - ["second, index is 1, auto-id is 2"]
+  - ["third"]
+
+category:
+  - fail
+  - coffee
+  - tea
+  - milk
+  - water
+
+data:
+  # seed line for structure inference; if only 1 line, treated as string
+  - milk,234,123g
+  # follows schema-defined minimal structure, preserving key order
+  - "water,456,456g"
+  # fill fields as available
+  - "water,456,456g,,tap"
+  - { "category": "milk", "water": "100g", "yield.grams": 120 }
+  - { "category": "milk", "water": null, "yield.grams": 100 }
+  # - { "category": "fail", "water": "100g", "yield.grams": null }
+  # - { "category": "fail", "water": "100g", "yield.grams": "asdf" }
+  # - { "category": "fail", "water": "asdf", "yield.grams": 120 }
+  - { "category": "fail", "water": " 1g ", "yield.grams": 120 }
+  # follows inferred structure above using the same key order
+  - [ "milk", "1g", 2 ]
+  - { "category": "coffee", "water": "120g", "yield.grams": 87, "origin": "kenya" }
+  # follows inferred structure above using the same key order
+  - [ "coffee", "120g", 63, "kenya" ]
+  - { "category": "fail", "water": "120g", "yield.grams": 38, "roast": "pink" }
+  - { "category": "coffee", "origin": "ethiopia", "water": "134g", "bean": "12.0g", "roast": "light", "yield.grams": 462, "notes": ["kiwi", "pastel", "butterfly"], "price": "33Gil" }
+  - { "category": "coffee", "origin": "ethiopia", "water": "135g", "bean": "13.0g", "roast": "dark", "yield.grams": 267, "notes": ["kiwi", "pastel", "butterfly"], "price": "653Gil" }
+  - { "category": "COFFEE", "origin": "Ethiopia", "water": "333g", "bean": "14.0g", "roast": "medium", "yield.grams": null, "notes": ["kiwi", "pastel", "butterfly"], "price": "82Gil" }
+  - { "category": "fail", "origin": "none", "water": "234g", "bean": "14.0g", "roast": "dark", "yield.grams": 126, "notes": ["kiwi", "pastel", "butterfly"], "price": "12Gil" }
+  - { "category": "cOfFeE", "origin": "colombia", "water": "234g", "bean": "14.0g", "roast": "light", "yield.grams": 249, "notes": ["kiwi", "pastel", "butterfly"], "price": "87Gil" }
+  - { "category": "tea", "origin": "colombia", "water": "234g", "water.temperature": "96C", "yield.grams": 523, "price": "22Zeni" }
+  # for items with clear discrete categorical values, derive a sequential id system by order of appearanace
+  - { "category": "coffee", "water": "120g", "yield.grams": 99, "origin": 1 }
+  - { "category": "tea", "water": "120g", "yield.grams": 1, "origin": 2 }
+  # for items with clear discrete categorical values, derive a sequential id system by order of appearance
+  - [ "tea", "123g", 456, 2 ]
+  # "category" has a predefined join table which does NOT follow an auto-increment table
+  - [ 2, "99g", 22, 3]
