@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/whacked/yamdb/pkg/codec"
+	jio "github.com/whacked/yamdb/pkg/io/jsonl"
 	scm "github.com/whacked/yamdb/pkg/schema"
 	"github.com/whacked/yamdb/pkg/types"
 	"gopkg.in/yaml.v3"
@@ -380,7 +382,8 @@ func recordGroupToSQLiteDDL(group *types.RecordGroup) string {
 	return ddl.String()
 }
 
-func main() {
+func runYamlDemo() {
+
 	// Read and parse YAML with order preservation
 	result, dataLines, err := parseYamlWithOrder("tests/example-1.yaml")
 	if err != nil {
@@ -495,4 +498,101 @@ func main() {
 	fmt.Println(recordGroupToSQLiteDDL(group))
 
 	codec.PrintRecordGroupAsJSONL(group)
+}
+
+func runJsonlDemo() {
+	// Open the JSONL file
+	file, err := os.Open("tests/example-2.jsonl")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	// Create a JSONL reader
+	reader, err := jio.NewReader(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a JSONL processor
+	processor := codec.NewJSONLProcessor()
+
+	// Process each record
+	i := 0
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("Warning: Failed to read record at index %d: %v", i, err)
+			continue
+		}
+
+		// Print record separator
+		fmt.Printf("\n%s\n", strings.Repeat("=", 80))
+		fmt.Printf("Record %d\n", i)
+		fmt.Printf("%s\n", strings.Repeat("-", 80))
+
+		// Pretty print the raw record
+		jsonBytes, _ := json.MarshalIndent(record, "  ", "  ")
+		fmt.Printf("Raw JSON:\n%s\n", string(jsonBytes))
+
+		result, err := processor.ProcessRecord(record)
+		if err != nil {
+			log.Printf("Warning: Failed to process record at index %d: %v", i, err)
+			continue
+		}
+
+		// Print the result with current state
+		fmt.Printf("\nProcessed Result:\n")
+		fmt.Printf("%s\n", strings.Repeat("-", 80))
+
+		if result.Version != nil {
+			fmt.Printf("Version Update: %d\n", *result.Version)
+			fmt.Printf("Current Version: %d\n", processor.Version)
+		}
+
+		if result.Schema != nil {
+			fmt.Printf("\nSchema Update:\n")
+			for _, col := range result.Schema {
+				fmt.Printf("  %s (%s)\n", col.Name, types.ColumnTypeToString(col.Type))
+			}
+			fmt.Printf("\nCurrent Schema:\n")
+			for _, col := range processor.Schema {
+				fmt.Printf("  %s (%s)\n", col.Name, types.ColumnTypeToString(col.Type))
+			}
+		}
+
+		if result.Meta != nil {
+			fmt.Printf("\nMeta Update:\n")
+			metaBytes, _ := json.MarshalIndent(result.Meta, "  ", "  ")
+			fmt.Printf("%s\n", string(metaBytes))
+			fmt.Printf("\nCurrent Meta:\n")
+			currentMetaBytes, _ := json.MarshalIndent(processor.Meta, "  ", "  ")
+			fmt.Printf("%s\n", string(currentMetaBytes))
+		}
+
+		if result.Data != nil {
+			fmt.Printf("\nData Record:\n")
+			dataBytes, _ := json.MarshalIndent(*result.Data, "  ", "  ")
+			fmt.Printf("%s\n", string(dataBytes))
+			fmt.Printf("\nApplied State:\n")
+			fmt.Printf("  Version: %d\n", *result.Version)
+			if len(result.Schema) > 0 {
+				fmt.Printf("  Schema: %d columns\n", len(result.Schema))
+			}
+			if len(result.Meta) > 0 {
+				fmt.Printf("  Meta: %d fields\n", len(result.Meta))
+			}
+		}
+
+		i++
+	}
+}
+
+func main() {
+	// runYamlDemo()
+
+	runJsonlDemo()
 }

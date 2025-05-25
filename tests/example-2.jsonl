@@ -1,0 +1,28 @@
+{"_version": 1, "_meta": {"source": "sensor.alpha", "segment": 1}}
+{"_schema": {"type": "object", "properties": {"name": {"type": "string"}, "temperature": {"type": "number"}, "status": {"type": "string"}}}, "note": "initial schema"}
+{"name": "alpha-1", "temperature": 22.5, "status": "ok"}
+{"name": "alpha-2", "temperature": 23.0, "status": "ok"}
+{"name": "alpha-3", "temperature": 24.8, "status": "warn"}
+{"name": "alpha-4", "temperature": 25.0, "status": "fail", "_meta": {"segment": 2}}
+
+{"name": "alpha-5", "temperature": 21.9, "status": "ok"}
+{"name": "alpha-6", "temperature": 22.1, "status": "warn"}
+
+{"_schema": {"type": "object", "properties": {"name": {"type": "string"}, "temperature": {"type": "number"}, "status": {"type": "string"}, "location": {"type": "string"}}}}
+{"_meta": {"source": "sensor.beta"}}
+{"name": "beta-1", "temperature": 28.0, "status": "ok", "location": "lab1"}
+{"name": "beta-2", "temperature": 28.4, "status": "warn", "location": "lab2"}
+{"name": "beta-3", "temperature": 29.1, "status": "ok", "location": "lab1"}
+{"name": "beta-4", "temperature": "30.0", "status": "fail", "location": "lab3"}
+
+{"name": "gamma-1", "temperature": 20.0, "_meta": {"source": "sensor.gamma", "segment": 3}}
+{"name": "gamma-2", "status": "ok", "location": "labX"}
+
+{"_schema": {"type": "object", "properties": {"timestamp": {"type": "string"}, "event": {"type": "string"}, "value": {"type": "number"}}}, "_meta": {"source": "event.stream", "segment": 4}}
+{"timestamp": "2024-10-01T10:00:00Z", "event": "boot", "value": 1.0}
+{"timestamp": "2024-10-01T10:05:00Z", "event": "tick", "value": 1.1}
+{"timestamp": "2024-10-01T10:10:00Z", "event": "tick", "value": 1.2}
+{"timestamp": "2024-10-01T10:15:00Z", "event": "shutdown", "value": 0.0}
+
+{"timestamp": "2024-10-01T11:00:00Z", "event": "@reset", "value": 0.0, "_meta": {"note": "reset command"}}
+{"timestamp": "2024-10-01T11:05:00Z", "event": "boot", "value": 1.0}

@@ -9,6 +9,14 @@ import (
 	"github.com/whacked/yamdb/pkg/types"
 )
 
+// ProcessedRecord represents the result of processing a JSONL record
+type ProcessedRecord struct {
+	Version *int
+	Schema  []types.ColumnInfo
+	Meta    map[string]interface{}
+	Data    *types.Record // if it's a data row
+}
+
 // RecordToJSONL converts a RecordWithMetadata to a JSONL string, only including the record data
 func RecordToJSONL(record types.RecordWithMetadata) (string, error) {
 	// Marshal only the record data to JSON
@@ -121,4 +129,233 @@ func PrintRecordGroupAsJSONL(group *types.RecordGroup) {
 		fmt.Println(buf.String())
 	}
 	fmt.Println()
+}
+
+// Result represents how a single Record line should be interpreted.
+type JSONLProcessResult struct {
+	// One of these is set depending on the directive type.
+	Version   *int
+	Schema    []types.ColumnInfo
+	Meta      map[string]interface{}
+	Data      *types.Record // if it's a data row
+	IsCommand bool          // for "@..." commands, future extension
+}
+
+func intPtr(i int) *int {
+	return &i
+}
+
+// ParseSchemaObject converts a valid JSON Schema object into []ColumnInfo.
+// It expects a schema with type: "object" and a "properties" map.
+func ParseSchemaObject(raw interface{}) ([]types.ColumnInfo, error) {
+	schema, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("_schema must be a JSON object")
+	}
+
+	if schema["type"] != "object" {
+		return nil, fmt.Errorf("_schema must be of type 'object'")
+	}
+
+	propsRaw, ok := schema["properties"]
+	if !ok {
+		return nil, fmt.Errorf("_schema missing 'properties'")
+	}
+
+	props, ok := propsRaw.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("'properties' must be an object")
+	}
+
+	// We extract in insertion order only if ordering is preserved externally
+	var cols []types.ColumnInfo
+	for name, defRaw := range props {
+		colType := types.TypeString // default
+		if def, ok := defRaw.(map[string]interface{}); ok {
+			if typeVal, ok := def["type"]; ok {
+				colType = mapJSONSchemaTypeToColumnType(typeVal)
+			}
+		}
+
+		cols = append(cols, types.ColumnInfo{
+			Name: name,
+			Type: colType,
+		})
+	}
+
+	return cols, nil
+}
+
+func mapJSONSchemaTypeToColumnType(schemaType interface{}) types.ColumnType {
+	switch t := schemaType.(type) {
+	case string:
+		switch t {
+		case "integer":
+			return types.TypeInt
+		case "number":
+			return types.TypeFloat
+		case "string":
+			return types.TypeString
+		default:
+			return types.TypeString
+		}
+	case []interface{}:
+		// Accept e.g. ["string", "null"]
+		for _, item := range t {
+			if str, ok := item.(string); ok {
+				if str != "null" {
+					return mapJSONSchemaTypeToColumnType(str)
+				}
+			}
+		}
+	}
+	return types.TypeString
+}
+
+// ProcessJSONLRecord interprets one line of JSONL as a Record.
+// It detects and extracts reserved keywords (_version, _schema, _meta),
+// and returns a structured result. Everything else is passed through as data.
+func ProcessJSONLRecord(r types.Record) (*JSONLProcessResult, error) {
+	result := &JSONLProcessResult{}
+
+	// Check for version
+	if v, ok := r["_version"]; ok {
+		fmt.Printf("\n[DEBUG] Detected _version field: %v\n", v)
+		versionNum, ok := v.(float64) // JSON numbers decode as float64
+		if !ok {
+			return nil, fmt.Errorf("_version must be a number")
+		}
+		fmt.Printf("[DEBUG] Parsed version number: %d\n", int(versionNum))
+		result.Version = intPtr(int(versionNum))
+	}
+
+	// Check for schema
+	if schemaRaw, ok := r["_schema"]; ok {
+		fmt.Printf("\n[DEBUG] Detected _schema field: %v\n", schemaRaw)
+		cols, err := ParseSchemaObject(schemaRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid _schema: %w", err)
+		}
+		fmt.Printf("[DEBUG] Parsed schema with %d columns:\n", len(cols))
+		for _, col := range cols {
+			fmt.Printf("  - %s (%s)\n", col.Name, types.ColumnTypeToString(col.Type))
+		}
+		result.Schema = cols
+	}
+
+	// Check for meta
+	if metaRaw, ok := r["_meta"]; ok {
+		fmt.Printf("\n[DEBUG] Detected _meta field: %v\n", metaRaw)
+		meta, ok := metaRaw.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("_meta must be an object")
+		}
+		fmt.Printf("[DEBUG] Parsed meta with %d fields:\n", len(meta))
+		for k, v := range meta {
+			fmt.Printf("  - %s: %v\n", k, v)
+		}
+		result.Meta = meta
+	}
+
+	// Check for commands
+	for _, v := range r {
+		if str, ok := v.(string); ok && strings.HasPrefix(str, "@") {
+			fmt.Printf("\n[DEBUG] Detected command: %s\n", str)
+			result.Data = &r
+			result.IsCommand = true
+			return result, nil // Commands are the only case where we return early
+		}
+	}
+
+	// If we have any special fields, return the result
+	if result.Version != nil || result.Schema != nil || result.Meta != nil {
+		return result, nil
+	}
+
+	// Default: a normal data row
+	result.Data = &r
+	return result, nil
+}
+
+// JSONLProcessor handles processing of JSONL records with state tracking
+type JSONLProcessor struct {
+	Version int
+	Schema  []types.ColumnInfo
+	Meta    map[string]interface{}
+}
+
+// NewJSONLProcessor creates a new JSONL processor
+func NewJSONLProcessor() *JSONLProcessor {
+	return &JSONLProcessor{
+		Meta: make(map[string]interface{}),
+	}
+}
+
+// ProcessRecord processes a single record, updating internal state
+func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, error) {
+	result := &ProcessedRecord{
+		Version: &p.Version,
+		Schema:  p.Schema,
+		Meta:    p.Meta,
+	}
+
+	// Process special fields
+	if version, ok := record["_version"]; ok {
+		if v, ok := version.(float64); ok {
+			p.Version = int(v)
+			result.Version = &p.Version
+			fmt.Printf("[DEBUG] Updated version to: %d\n", p.Version)
+		}
+	}
+
+	if schema, ok := record["_schema"]; ok {
+		// Parse schema into column info
+		cols, err := ParseSchemaObject(schema)
+		if err != nil {
+			return nil, fmt.Errorf("invalid schema: %w", err)
+		}
+		p.Schema = cols
+		result.Schema = cols
+		fmt.Printf("[DEBUG] Updated schema with %d columns\n", len(cols))
+	}
+
+	if meta, ok := record["_meta"]; ok {
+		if m, ok := meta.(map[string]interface{}); ok {
+			// Merge new meta with existing
+			for k, v := range m {
+				p.Meta[k] = v
+			}
+			fmt.Printf("[DEBUG] Updated meta: %v\n", p.Meta)
+			result.Meta = p.Meta
+		}
+	}
+
+	// If this is a data record (not just special fields), add it to the result
+	if len(record) > 0 {
+		// Remove special fields from the data record
+		data := make(types.Record)
+		for k, v := range record {
+			if !strings.HasPrefix(k, "_") {
+				data[k] = v
+			}
+		}
+		if len(data) > 0 {
+			result.Data = &data
+		}
+	}
+
+	return result, nil
+}
+
+// ProcessRecords processes multiple records while maintaining state
+func (p *JSONLProcessor) ProcessRecords(records []types.Record) ([]*ProcessedRecord, error) {
+	var results []*ProcessedRecord
+	for _, record := range records {
+		result, err := p.ProcessRecord(record)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
