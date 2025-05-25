@@ -65,7 +65,18 @@ func ColumnTypeToString(t ColumnType) string {
 		return "float"
 	case TypeFloat:
 		return "float"
+	case TypeArray:
+		return "array"
+	case TypeObject:
+		return "object"
 	default:
 		return "string"
 	}
+}
+
+// RecordGroup represents a group of records with the same structure
+type RecordGroup struct {
+	Columns    []ColumnInfo
+	Records    []ValuesWithColumns
+	StartIndex int
 }

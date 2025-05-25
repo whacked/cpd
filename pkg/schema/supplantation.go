@@ -126,5 +126,11 @@ func promote(a, b types.ColumnType) types.ColumnType {
 	if a == types.TypeFloat || b == types.TypeFloat {
 		return types.TypeFloat
 	}
+	if a == types.TypeArray || b == types.TypeArray {
+		return types.TypeArray
+	}
+	if a == types.TypeObject || b == types.TypeObject {
+		return types.TypeObject
+	}
 	return types.TypeFloat
 }
