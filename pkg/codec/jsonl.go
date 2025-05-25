@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/whacked/yamdb/pkg/types"
 )
@@ -66,4 +67,58 @@ func InferType(val interface{}) types.ColumnType {
 	default:
 		return types.TypeString
 	}
+}
+
+// PrintRecordGroupAsJSONL prints a group of records in JSON Lines format
+func PrintRecordGroupAsJSONL(group *types.RecordGroup) {
+	fmt.Println("\n=== JSON Lines Format ===")
+	for _, record := range group.Records {
+		// Create an ordered map to hold the record data
+		recordMap := make(map[string]interface{})
+		orderedKeys := make([]string, 0, len(group.Columns))
+
+		// Add each field to the map using column names as keys
+		for j, col := range group.Columns {
+			var val interface{}
+			if j < len(record.Values) {
+				val = record.Values[j]
+			}
+
+			// Use column name as key, or generate one if empty
+			key := col.Name
+			if key == "" {
+				key = fmt.Sprintf("field_%d", j)
+			}
+			recordMap[key] = val
+			orderedKeys = append(orderedKeys, key)
+		}
+
+		// Create a custom encoder that preserves order
+		buf := new(strings.Builder)
+		enc := json.NewEncoder(buf)
+		enc.SetIndent("", "")
+
+		// Write the opening brace
+		buf.WriteString("{")
+
+		// Write each field in order
+		for j, key := range orderedKeys {
+			if j > 0 {
+				buf.WriteString(",")
+			}
+			// Marshal the key
+			keyBytes, _ := json.Marshal(key)
+			buf.Write(keyBytes)
+			buf.WriteString(":")
+			// Marshal the value
+			valBytes, _ := json.Marshal(recordMap[key])
+			buf.Write(valBytes)
+		}
+
+		// Write the closing brace
+		buf.WriteString("}")
+
+		fmt.Println(buf.String())
+	}
+	fmt.Println()
 }
