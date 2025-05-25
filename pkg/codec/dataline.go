@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/whacked/yamdb/pkg/types"
 	jsoniter "github.com/json-iterator/go"
+	"github.com/whacked/yamdb/pkg/types"
 )
 
 // ExtractOrderedKeys takes a JSON-compatible string containing key-value pairs and extracts
@@ -82,11 +82,21 @@ func GetDataLines(filename string) ([]string, error) {
 }
 
 func ParseRecordToValuesWithColumns(record string) (types.ValuesWithColumns, error) {
+
+	cleanedRecord := strings.TrimSpace(record)
+	if cleanedRecord == "" {
+		return types.ValuesWithColumns{}, fmt.Errorf("empty record")
+	}
+
+	if cleanedRecord[0] == '"' && cleanedRecord[len(cleanedRecord)-1] == '"' {
+		cleanedRecord = cleanedRecord[1 : len(cleanedRecord)-1]
+	}
+
 	// First try to parse as JSON object
 	var obj map[string]interface{}
-	if err := json.Unmarshal([]byte(record), &obj); err == nil {
+	if err := json.Unmarshal([]byte(cleanedRecord), &obj); err == nil {
 		// Object case - use order from input
-		keys, err := ExtractOrderedKeys(record)
+		keys, err := ExtractOrderedKeys(cleanedRecord)
 		if err != nil {
 			return types.ValuesWithColumns{}, fmt.Errorf("failed to extract ordered keys: %v", err)
 		}
@@ -111,7 +121,7 @@ func ParseRecordToValuesWithColumns(record string) (types.ValuesWithColumns, err
 
 	// Try to parse as JSON array
 	var arr []interface{}
-	if err := json.Unmarshal([]byte(record), &arr); err == nil {
+	if err := json.Unmarshal([]byte(cleanedRecord), &arr); err == nil {
 		values := make([]interface{}, len(arr))
 		columns := make([]types.ColumnInfo, len(arr))
 
@@ -130,7 +140,7 @@ func ParseRecordToValuesWithColumns(record string) (types.ValuesWithColumns, err
 	}
 
 	// Try to parse as CSV
-	reader := csv.NewReader(strings.NewReader(record))
+	reader := csv.NewReader(strings.NewReader(cleanedRecord))
 	fields, err := reader.Read()
 	if err == nil {
 		values := make([]interface{}, len(fields))

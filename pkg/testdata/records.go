@@ -24,7 +24,7 @@ var TestRecords = []TestRecord{
 		},
 	},
 	{ // index 1
-		`water,456,456g`,
+		`"water,456,456g"`,
 		types.ValuesWithColumns{
 			Values: []interface{}{"water", 456.0, "456g"},
 			Columns: []types.ColumnInfo{
