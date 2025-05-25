@@ -27,3 +27,4 @@
 
 {"timestamp": "2024-10-01T11:00:00Z", "event": "@reset", "value": 0.0, "_meta": {"note": "reset command"}}
 {"timestamp": "2024-10-01T11:05:00Z", "event": "boot", "value": 1.0}
+{"timestamp": "2024-10-01T11:05:00Z", "event": "boot", "value": 2.0, "category": "@merge"}

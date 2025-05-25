@@ -279,19 +279,77 @@ func ProcessJSONLRecord(r types.Record) (*JSONLProcessResult, error) {
 	return result, nil
 }
 
+// CategoryProcessor defines how to handle a special category
+type CategoryProcessor interface {
+	// Process handles the special category logic
+	Process(record types.Record) error
+	// Category returns the category name this processor handles
+	Category() string
+}
+
 // JSONLProcessor handles processing of JSONL records with state tracking
 type JSONLProcessor struct {
 	Version   int
 	Schema    interface{}        // Raw JSON Schema object
 	validator *jsonschema.Schema // Cached validator
 	Meta      map[string]interface{}
+	// Category processors
+	categoryProcessors []CategoryProcessor
 }
 
 // NewJSONLProcessor creates a new JSONL processor
 func NewJSONLProcessor() *JSONLProcessor {
 	return &JSONLProcessor{
 		Meta: make(map[string]interface{}),
+		categoryProcessors: []CategoryProcessor{
+			&MergeCategoryProcessor{},
+			// Add more category processors here
+		},
 	}
+}
+
+// RegisterCategoryProcessor adds a new category processor
+func (p *JSONLProcessor) RegisterCategoryProcessor(processor CategoryProcessor) {
+	p.categoryProcessors = append(p.categoryProcessors, processor)
+}
+
+// processCategories handles any special categories in the record
+func (p *JSONLProcessor) processCategories(record types.Record) error {
+	if category, ok := record["category"].(string); ok {
+		// Split categories by comma
+		categories := strings.Split(category, ",")
+		for _, cat := range categories {
+			cat = strings.TrimSpace(cat)
+			// Skip if not a special category
+			if !strings.HasPrefix(cat, "@") {
+				continue
+			}
+
+			// Find and use appropriate processor
+			for _, processor := range p.categoryProcessors {
+				if processor.Category() == cat {
+					if err := processor.Process(record); err != nil {
+						return fmt.Errorf("failed to process category %s: %w", cat, err)
+					}
+					fmt.Printf("[DEBUG] Processed category: %s\n", cat)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// MergeCategoryProcessor handles the @merge category
+type MergeCategoryProcessor struct{}
+
+func (p *MergeCategoryProcessor) Category() string {
+	return "@merge"
+}
+
+func (p *MergeCategoryProcessor) Process(record types.Record) error {
+	// TODO: Implement merge logic
+	fmt.Printf("[DEBUG] Processing merge for record: %v\n", record)
+	return nil
 }
 
 // ProcessRecord processes a single record, updating internal state
@@ -342,6 +400,11 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 		}
 	}
 
+	// Process any special categories
+	if err := p.processCategories(record); err != nil {
+		return nil, err
+	}
+
 	// If this is a data record (not just special fields), add it to the result
 	if len(record) > 0 {
 		// Remove special fields from the plainData record
@@ -359,10 +422,15 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 				fmt.Printf("\n[DEBUG] Validating record [%v]\n", plainData)
 
 				// Validate the record
-				if err := p.validator.Validate(plainData); err != nil {
-					fmt.Printf("[WARN] Record validation failed: %v\n", err)
+				dataBytes, err := json.Marshal(plainData)
+				if err != nil {
+					fmt.Printf("[WARN] Failed to marshal record for validation: %v\n", err)
 				} else {
-					fmt.Printf("[DEBUG] Record validated successfully\n")
+					if err := p.validator.Validate(string(dataBytes)); err != nil {
+						fmt.Printf("[WARN] Record validation failed: %v\n", err)
+					} else {
+						fmt.Printf("[DEBUG] Record validated successfully\n")
+					}
 				}
 			}
 		} else {
