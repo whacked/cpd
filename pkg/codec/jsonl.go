@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
+	"github.com/whacked/yamdb/pkg/internal"
 	"github.com/whacked/yamdb/pkg/types"
 )
 
@@ -222,39 +223,39 @@ func ProcessJSONLRecord(r types.Record) (*JSONLProcessResult, error) {
 
 	// Check for version
 	if v, ok := r["_version"]; ok {
-		fmt.Printf("\n[DEBUG] Detected _version field: %v\n", v)
+		internal.DebugLog("Detected _version field: %v", v)
 		versionNum, ok := v.(float64) // JSON numbers decode as float64
 		if !ok {
 			return nil, fmt.Errorf("_version must be a number")
 		}
-		fmt.Printf("[DEBUG] Parsed version number: %d\n", int(versionNum))
+		internal.DebugLog("Parsed version number: %d", int(versionNum))
 		result.Version = intPtr(int(versionNum))
 	}
 
 	// Check for schema
 	if schemaRaw, ok := r["_schema"]; ok {
-		fmt.Printf("\n[DEBUG] Detected _schema field: %v\n", schemaRaw)
+		internal.DebugLog("Detected _schema field: %v", schemaRaw)
 		cols, err := ParseSchemaObject(schemaRaw)
 		if err != nil {
 			return nil, fmt.Errorf("invalid _schema: %w", err)
 		}
-		fmt.Printf("[DEBUG] Parsed schema with %d columns:\n", len(cols))
+		internal.DebugLog("Parsed schema with %d columns:", len(cols))
 		for _, col := range cols {
-			fmt.Printf("  - %s (%s)\n", col.Name, types.ColumnTypeToString(col.Type))
+			internal.DebugLog("  - %s (%s)", col.Name, types.ColumnTypeToString(col.Type))
 		}
 		result.Schema = cols
 	}
 
 	// Check for meta
 	if metaRaw, ok := r["_meta"]; ok {
-		fmt.Printf("\n[DEBUG] Detected _meta field: %v\n", metaRaw)
+		internal.DebugLog("Detected _meta field: %v", metaRaw)
 		meta, ok := metaRaw.(map[string]interface{})
 		if !ok {
 			return nil, fmt.Errorf("_meta must be an object")
 		}
-		fmt.Printf("[DEBUG] Parsed meta with %d fields:\n", len(meta))
+		internal.DebugLog("Parsed meta with %d fields:", len(meta))
 		for k, v := range meta {
-			fmt.Printf("  - %s: %v\n", k, v)
+			internal.DebugLog("  - %s: %v", k, v)
 		}
 		result.Meta = meta
 	}
@@ -262,7 +263,7 @@ func ProcessJSONLRecord(r types.Record) (*JSONLProcessResult, error) {
 	// Check for commands
 	for _, v := range r {
 		if str, ok := v.(string); ok && strings.HasPrefix(str, "@") {
-			fmt.Printf("\n[DEBUG] Detected command: %s\n", str)
+			internal.DebugLog("Detected command: %s", str)
 			result.Data = &r
 			result.IsCommand = true
 			return result, nil // Commands are the only case where we return early
@@ -343,7 +344,7 @@ func (p *JSONLProcessor) processCategories(record types.Record) error {
 					if err := processor.Process(record); err != nil {
 						return fmt.Errorf("failed to process category %s: %w", cat, err)
 					}
-					fmt.Printf("[DEBUG] Processed category: %s\n", cat)
+					internal.DebugLog("Processed category: %s", cat)
 				}
 			}
 		}
@@ -402,10 +403,8 @@ func (p *MergeCategoryProcessor) Process(record types.Record) error {
 	p.processor.RecordHistory = p.processor.RecordHistory[:p.processor.currentIndex]
 	p.processor.currentIndex--
 
-	fmt.Printf("[DEBUG] Merged record at index %d: %v\n",
-		p.processor.currentIndex, merged)
-	fmt.Printf("[DEBUG] Current record swallowed, history length now: %d\n",
-		len(p.processor.RecordHistory))
+	internal.DebugLog("Merged record at index %d: %v", p.processor.currentIndex, merged)
+	internal.DebugLog("Current record swallowed, history length now: %d", len(p.processor.RecordHistory))
 	return nil
 }
 
@@ -422,7 +421,7 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 		if v, ok := version.(float64); ok {
 			p.Version = int(v)
 			result.Version = &p.Version
-			fmt.Printf("[DEBUG] Updated version to: %d\n", p.Version)
+			internal.DebugLog("Updated version to: %d", p.Version)
 		}
 	}
 
@@ -441,7 +440,7 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 				fmt.Printf("[WARN] Failed to compile JSON Schema: %v\n", err)
 			} else {
 				p.validator = validator
-				fmt.Printf("[DEBUG] Updated schema and cached validator\n")
+				internal.DebugLog("Updated schema and cached validator")
 			}
 		}
 	}
@@ -452,7 +451,7 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 			for k, v := range m {
 				p.Meta[k] = v
 			}
-			fmt.Printf("[DEBUG] Updated meta: %v\n", p.Meta)
+			internal.DebugLog("Updated meta: %v", p.Meta)
 			result.Meta = p.Meta
 		}
 	}
@@ -471,9 +470,9 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 		// Add record to history BEFORE processing categories
 		p.RecordHistory = append(p.RecordHistory, record)
 		p.currentIndex = len(p.RecordHistory) - 1
-		fmt.Printf("[DEBUG] Added record to history (length: %d)\n", len(p.RecordHistory))
+		internal.DebugLog("Added record to history (length: %d)", len(p.RecordHistory))
 	} else {
-		fmt.Printf("[DEBUG] Skipping empty record (only special fields)\n")
+		internal.DebugLog("Skipping empty record (only special fields)")
 	}
 
 	// Process any special categories
@@ -495,17 +494,17 @@ func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, e
 
 			// Validate against schema if we have one
 			if p.validator != nil {
-				fmt.Printf("\n[DEBUG] Validating record [%v]\n", plainData)
+				internal.DebugLog("Validating record [%v]", plainData)
 
 				// Validate the record
 				if err := p.validator.Validate(plainData); err != nil {
-					fmt.Printf("[WARN] Record validation failed: %v\n", err)
+					fmt.Printf("[WARN] Record validation failed for %v: %v\n", plainData, err)
 				} else {
-					fmt.Printf("[DEBUG] Record validated successfully\n")
+					internal.DebugLog("Record validated successfully")
 				}
 			}
 		} else {
-			fmt.Printf("[DEBUG] Skipping validation for directive-only record\n")
+			internal.DebugLog("Skipping validation for directive-only record")
 		}
 	}
 
