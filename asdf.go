@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/santhosh-tekuri/jsonschema/v5"
@@ -517,6 +518,12 @@ func runJsonlDemo(filepath string) {
 	// Create a JSONL processor
 	processor := codec.NewJSONLProcessor()
 
+	// Create color functions
+	recordHeader := color.New(color.FgHiCyan, color.Bold).SprintFunc()
+	sectionHeader := color.New(color.FgHiYellow).SprintFunc()
+	warnMsg := color.New(color.FgHiRed).SprintFunc()
+	jsonOutput := color.New(color.FgHiWhite).SprintFunc()
+
 	// Process each record
 	i := 0
 	for {
@@ -525,63 +532,63 @@ func runJsonlDemo(filepath string) {
 			break
 		}
 		if err != nil {
-			log.Printf("Warning: Failed to read record at index %d: %v", i, err)
+			log.Printf(warnMsg("Warning: Failed to read record at index %d: %v"), i, err)
 			continue
 		}
 
 		// Print record separator
 		fmt.Printf("\n%s\n", strings.Repeat("=", 80))
-		fmt.Printf("Record %d\n", i)
+		fmt.Printf("%s\n", recordHeader(fmt.Sprintf("Record %d", i)))
 		fmt.Printf("%s\n", strings.Repeat("-", 80))
 
 		// Pretty print the raw record
 		jsonBytes, _ := json.MarshalIndent(record, "  ", "  ")
-		fmt.Printf("Raw JSON:\n%s\n", string(jsonBytes))
+		fmt.Printf("%s:\n%s\n", sectionHeader("Raw JSON"), jsonOutput(string(jsonBytes)))
 
 		result, err := processor.ProcessRecord(record)
 		if err != nil {
-			log.Printf("Warning: Failed to process record at index %d: %v", i, err)
+			log.Printf(warnMsg("Warning: Failed to process record at index %d: %v"), i, err)
 			continue
 		}
 
 		// Print the result with current state
-		fmt.Printf("\nProcessed Result:\n")
+		fmt.Printf("\n%s:\n", sectionHeader("Processed Result"))
 		fmt.Printf("%s\n", strings.Repeat("-", 80))
 
 		if result.Version != nil {
-			fmt.Printf("Version Update: %d\n", *result.Version)
-			fmt.Printf("Current Version: %d\n", processor.Version)
+			fmt.Printf("%s: %d\n", sectionHeader("Version Update"), *result.Version)
+			fmt.Printf("%s: %d\n", sectionHeader("Current Version"), processor.Version)
 		}
 
 		if result.Schema != nil {
-			fmt.Printf("\nSchema Update:\n")
+			fmt.Printf("\n%s:\n", sectionHeader("Schema Update"))
 			schemaBytes, _ := json.MarshalIndent(result.Schema, "  ", "  ")
-			fmt.Printf("%s\n", string(schemaBytes))
-			fmt.Printf("\nCurrent Schema:\n")
+			fmt.Printf("%s\n", jsonOutput(string(schemaBytes)))
+			fmt.Printf("\n%s:\n", sectionHeader("Current Schema"))
 			currentSchemaBytes, _ := json.MarshalIndent(processor.Schema, "  ", "  ")
-			fmt.Printf("%s\n", string(currentSchemaBytes))
+			fmt.Printf("%s\n", jsonOutput(string(currentSchemaBytes)))
 		}
 
 		if result.Meta != nil {
-			fmt.Printf("\nMeta Update:\n")
+			fmt.Printf("\n%s:\n", sectionHeader("Meta Update"))
 			metaBytes, _ := json.MarshalIndent(result.Meta, "  ", "  ")
-			fmt.Printf("%s\n", string(metaBytes))
-			fmt.Printf("\nCurrent Meta:\n")
+			fmt.Printf("%s\n", jsonOutput(string(metaBytes)))
+			fmt.Printf("\n%s:\n", sectionHeader("Current Meta"))
 			currentMetaBytes, _ := json.MarshalIndent(processor.Meta, "  ", "  ")
-			fmt.Printf("%s\n", string(currentMetaBytes))
+			fmt.Printf("%s\n", jsonOutput(string(currentMetaBytes)))
 		}
 
 		if result.Data != nil {
-			fmt.Printf("\nData Record:\n")
+			fmt.Printf("\n%s:\n", sectionHeader("Data Record"))
 			dataBytes, _ := json.MarshalIndent(*result.Data, "  ", "  ")
-			fmt.Printf("%s\n", string(dataBytes))
-			fmt.Printf("\nApplied State:\n")
-			fmt.Printf("  Version: %d\n", *result.Version)
+			fmt.Printf("%s\n", jsonOutput(string(dataBytes)))
+			fmt.Printf("\n%s:\n", sectionHeader("Applied State"))
+			fmt.Printf("  %s: %d\n", sectionHeader("Version"), *result.Version)
 			if result.Schema != nil {
-				fmt.Printf("  Schema: present\n")
+				fmt.Printf("  %s: present\n", sectionHeader("Schema"))
 			}
 			if len(result.Meta) > 0 {
-				fmt.Printf("  Meta: %d fields\n", len(result.Meta))
+				fmt.Printf("  %s: %d fields\n", sectionHeader("Meta"), len(result.Meta))
 			}
 		}
 
@@ -590,7 +597,7 @@ func runJsonlDemo(filepath string) {
 
 	// Output final processed history as JSONL
 	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
-	fmt.Printf("Final Processed History (JSONL):\n")
+	fmt.Printf("%s:\n", sectionHeader("Final Processed History (JSONL)"))
 	fmt.Printf("%s\n", strings.Repeat("-", 80))
 	for _, record := range processor.RecordHistory {
 		// Remove special fields for output
@@ -601,7 +608,7 @@ func runJsonlDemo(filepath string) {
 			}
 		}
 		jsonBytes, _ := json.Marshal(outputRecord)
-		fmt.Println(string(jsonBytes))
+		fmt.Println(jsonOutput(string(jsonBytes)))
 	}
 }
 
