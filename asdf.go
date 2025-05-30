@@ -502,6 +502,8 @@ func runYamlDemo() {
 }
 
 func runJsonlDemo(filepath string) {
+	expandAndCarrySpecialFields := true // Set to false to disable state expansion
+
 	// Open the JSONL file
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -612,6 +614,20 @@ func runJsonlDemo(filepath string) {
 		outputRecord := make(map[string]interface{})
 		var orderedKeys []string
 
+		if expandAndCarrySpecialFields {
+			// Add version if set
+			if processor.Version > 0 {
+				outputRecord["_version"] = processor.Version
+				orderedKeys = append(orderedKeys, "_version")
+			}
+
+			// Add meta if present
+			if len(processor.Meta) > 0 {
+				outputRecord["_meta"] = processor.Meta
+				orderedKeys = append(orderedKeys, "_meta")
+			}
+		}
+
 		// Get schema properties if available
 		if schema, ok := processor.Schema.(map[string]interface{}); ok {
 			if props, ok := schema["properties"].(map[string]interface{}); ok {
@@ -666,6 +682,188 @@ func runJsonlDemo(filepath string) {
 	}
 }
 
+func runJsonToYamlDemo(filepath string) {
+	// Open the JSONL file
+	file, err := os.Open(filepath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	// Create a JSONL reader
+	reader, err := jio.NewReader(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a JSONL processor
+	processor := codec.NewJSONLProcessor()
+
+	// Process each record
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("Warning: Failed to read record: %v", err)
+			continue
+		}
+
+		_, err = processor.ProcessRecord(record)
+		if err != nil {
+			log.Printf("Warning: Failed to process record: %v", err)
+			continue
+		}
+	}
+
+	// Start building YAML output
+	var yamlBuilder strings.Builder
+
+	// Write _schemas section
+	yamlBuilder.WriteString("_schemas:\n")
+	yamlBuilder.WriteString("  data:\n")
+	yamlBuilder.WriteString("    type: array\n")
+	yamlBuilder.WriteString("    items:\n")
+	yamlBuilder.WriteString("      type: object\n")
+	yamlBuilder.WriteString("      additionalProperties: false\n")
+
+	// Get schema properties if available
+	if schema, ok := processor.Schema.(map[string]interface{}); ok {
+		if props, ok := schema["properties"].(map[string]interface{}); ok {
+			// Write required fields
+			yamlBuilder.WriteString("      required: [")
+			first := true
+			for field := range props {
+				if !first {
+					yamlBuilder.WriteString(", ")
+				}
+				yamlBuilder.WriteString(fmt.Sprintf("%q", field))
+				first = false
+			}
+			yamlBuilder.WriteString("]\n")
+
+			// Write properties
+			yamlBuilder.WriteString("      properties:\n")
+			for field, prop := range props {
+				yamlBuilder.WriteString(fmt.Sprintf("        %q:\n", field))
+				if propMap, ok := prop.(map[string]interface{}); ok {
+					if typeVal, ok := propMap["type"]; ok {
+						switch t := typeVal.(type) {
+						case string:
+							yamlBuilder.WriteString(fmt.Sprintf("          type: %q\n", t))
+						case []interface{}:
+							yamlBuilder.WriteString("          type: [")
+							for i, v := range t {
+								if i > 0 {
+									yamlBuilder.WriteString(", ")
+								}
+								yamlBuilder.WriteString(fmt.Sprintf("%q", v))
+							}
+							yamlBuilder.WriteString("]\n")
+						}
+					}
+					if enum, ok := propMap["enum"]; ok {
+						yamlBuilder.WriteString("          enum: [")
+						if enumArr, ok := enum.([]interface{}); ok {
+							for i, v := range enumArr {
+								if i > 0 {
+									yamlBuilder.WriteString(", ")
+								}
+								yamlBuilder.WriteString(fmt.Sprintf("%q", v))
+							}
+						}
+						yamlBuilder.WriteString("]\n")
+					}
+				}
+			}
+		}
+	}
+
+	// Write _keys section (empty for now)
+	yamlBuilder.WriteString("\n_keys:\n  # foreign key table\n\n")
+
+	// Write _codecs section (empty for now)
+	yamlBuilder.WriteString("_codecs:\n  _:\n    category: toLowerCase\n  data:\n    # codecs will be added here\n\n")
+
+	// Write data section
+	yamlBuilder.WriteString("data:\n")
+	for _, record := range processor.RecordHistory {
+		// Skip special records
+		if _, hasSchema := record["_schema"]; hasSchema {
+			continue
+		}
+		if _, hasMeta := record["_meta"]; hasMeta {
+			continue
+		}
+
+		// Create ordered output record
+		outputRecord := make(map[string]interface{})
+		var orderedKeys []string
+
+		// Get schema properties if available
+		if schema, ok := processor.Schema.(map[string]interface{}); ok {
+			if props, ok := schema["properties"].(map[string]interface{}); ok {
+				// First add fields in schema order
+				for field := range props {
+					if value, exists := record[field]; exists {
+						outputRecord[field] = value
+						orderedKeys = append(orderedKeys, field)
+					}
+				}
+			}
+		}
+
+		// Then add any fields not in schema
+		for field, value := range record {
+			if !strings.HasPrefix(field, "_") {
+				// Check if field exists in schema properties
+				if schema, ok := processor.Schema.(map[string]interface{}); ok {
+					if props, ok := schema["properties"].(map[string]interface{}); ok {
+						if _, exists := props[field]; !exists {
+							outputRecord[field] = value
+							orderedKeys = append(orderedKeys, field)
+						}
+					} else {
+						outputRecord[field] = value
+						orderedKeys = append(orderedKeys, field)
+					}
+				} else {
+					outputRecord[field] = value
+					orderedKeys = append(orderedKeys, field)
+				}
+			}
+		}
+
+		// Write record as YAML
+		yamlBuilder.WriteString("  - ")
+		if len(orderedKeys) == 1 {
+			// Single value, write directly
+			valBytes, _ := yaml.Marshal(outputRecord[orderedKeys[0]])
+			yamlBuilder.Write(valBytes)
+		} else {
+			// Multiple values, write as object
+			yamlBuilder.WriteString("{")
+			for i, key := range orderedKeys {
+				if i > 0 {
+					yamlBuilder.WriteString(",")
+				}
+				// Marshal the key
+				keyBytes, _ := json.Marshal(key)
+				yamlBuilder.Write(keyBytes)
+				yamlBuilder.WriteString(":")
+				// Marshal the value
+				valBytes, _ := json.Marshal(outputRecord[key])
+				yamlBuilder.Write(valBytes)
+			}
+			yamlBuilder.WriteString("}")
+		}
+		yamlBuilder.WriteString("\n")
+	}
+
+	fmt.Println(yamlBuilder.String())
+}
+
 func main() {
 	// runYamlDemo()
 
@@ -682,5 +880,7 @@ func main() {
 			filepath = lastArg
 		}
 	}
+
 	runJsonlDemo(filepath)
+	// runJsonToYamlDemo(filepath)
 }
