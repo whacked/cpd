@@ -1,0 +1,315 @@
+package relational
+
+import (
+	"fmt"
+	"math"
+
+	"github.com/whacked/yamdb/pkg/types"
+)
+
+const (
+	// MaxUniqueValues is the maximum number of unique values we'll track for a string field
+	// Beyond this, we assume it's not a good candidate for a join table
+	MaxUniqueValues = 1000
+
+	// MinOccurrences is the minimum number of times a value must appear to be considered
+	// for a join table
+	MinOccurrences = 3
+)
+
+// FieldCategory represents the type of a field
+type FieldCategory int
+
+const (
+	// FieldCategoryUnknown represents a field we can't categorize
+	FieldCategoryUnknown FieldCategory = iota
+	// FieldCategoryOneToMany represents a field that maps one record to many values (e.g. "event")
+	FieldCategoryOneToMany
+	// FieldCategoryManyToMany represents a field that maps many records to many values (e.g. "tags")
+	FieldCategoryManyToMany
+	// FieldCategoryUnique represents a field with unique values (e.g. "id", "timestamp")
+	FieldCategoryUnique
+	// FieldCategoryCommand represents a special command field (starts with @)
+	FieldCategoryCommand
+)
+
+func GetCategoryString(category FieldCategory) string {
+	switch category {
+	case FieldCategoryManyToMany:
+		return "many-to-many"
+	case FieldCategoryOneToMany:
+		return "one-to-many"
+	case FieldCategoryUnknown:
+		return "unknown"
+	}
+	return "unknown"
+}
+
+// FieldInfo contains derived information about a field
+type FieldInfo struct {
+	Name           string
+	Category       FieldCategory
+	IsArray        bool
+	ElementType    string
+	TotalRecords   int
+	TotalElements  int
+	UniqueValues   int
+	ValueFrequency map[string]int
+	Score          float64
+}
+
+// ValueStats tracks statistics about field values
+type ValueStats struct {
+	TotalOccurrences int            // Total non-nil occurrences
+	TotalElements    int            // For arrays: total number of elements across all records
+	Values           map[string]int // Frequency of each value
+	IsArray          bool           // Whether this is an array field
+	ElementType      string         // For arrays: type of elements
+}
+
+// TableDeriver analyzes JSONL records to derive relational table structures
+type TableDeriver struct {
+	FieldStats map[string]*ValueStats // Stats for all fields
+}
+
+// NewTableDeriver creates a new TableDeriver instance
+func NewTableDeriver() *TableDeriver {
+	return &TableDeriver{
+		FieldStats: make(map[string]*ValueStats),
+	}
+}
+
+// ProcessHistory analyzes a slice of records to identify potential join tables
+func (d *TableDeriver) ProcessHistory(history []types.Record) error {
+	// First pass: collect statistics for all fields
+	for _, record := range history {
+		for field, value := range record {
+			// Skip special fields
+			if field[0] == '_' {
+				continue
+			}
+
+			// Initialize stats for this field if not exists
+			if _, exists := d.FieldStats[field]; !exists {
+				d.FieldStats[field] = &ValueStats{
+					Values: make(map[string]int),
+				}
+			}
+			stats := d.FieldStats[field]
+
+			// Handle arrays
+			if arr, ok := value.([]interface{}); ok {
+				stats.IsArray = true
+				stats.TotalOccurrences++
+				stats.TotalElements += len(arr)
+
+				// Only process if we haven't exceeded the limit
+				if len(stats.Values) < MaxUniqueValues {
+					// Determine element type from first non-nil value
+					if stats.ElementType == "" && len(arr) > 0 {
+						for _, v := range arr {
+							if v != nil {
+								switch v.(type) {
+								case string:
+									stats.ElementType = "string"
+								case float64:
+									stats.ElementType = "number"
+								case bool:
+									stats.ElementType = "boolean"
+								default:
+									stats.ElementType = "unknown"
+								}
+								break
+							}
+						}
+					}
+
+					// Track values
+					for _, v := range arr {
+						if str, ok := v.(string); ok {
+							stats.Values[str]++
+						}
+					}
+				}
+			} else if str, ok := value.(string); ok {
+				// Handle string fields
+				stats.TotalOccurrences++
+				stats.TotalElements++ // For string fields, this is the same as occurrences
+				if len(stats.Values) < MaxUniqueValues {
+					stats.Values[str]++
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// calculateEntropy computes the Shannon entropy of the value distribution
+func (stats *ValueStats) calculateEntropy() float64 {
+	if stats.TotalOccurrences == 0 {
+		return 0
+	}
+
+	var entropy float64
+	for _, count := range stats.Values {
+		p := float64(count) / float64(stats.TotalOccurrences)
+		entropy -= p * math.Log2(p)
+	}
+	return entropy
+}
+
+// calculateGini computes the Gini coefficient of the value distribution
+func (stats *ValueStats) calculateGini() float64 {
+	if stats.TotalOccurrences == 0 {
+		return 0
+	}
+
+	var sumSquares float64
+	for _, count := range stats.Values {
+		p := float64(count) / float64(stats.TotalOccurrences)
+		sumSquares += p * p
+	}
+	return 1 - sumSquares
+}
+
+// calculateMaxFrequency returns the ratio of the most frequent value
+func (stats *ValueStats) calculateMaxFrequency() float64 {
+	if stats.TotalOccurrences == 0 {
+		return 0
+	}
+
+	var maxCount int
+	for _, count := range stats.Values {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+	return float64(maxCount) / float64(stats.TotalOccurrences)
+}
+
+// calculateReuseRatio returns the ratio of total occurrences to unique values
+func (stats *ValueStats) calculateReuseRatio() float64 {
+	if len(stats.Values) == 0 {
+		return 0
+	}
+	return float64(stats.TotalOccurrences) / float64(len(stats.Values))
+}
+
+// GetJoinTableCandidates returns fields that should be join tables with their scores
+func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
+	candidates := make(map[string]float64)
+
+	for field, stats := range d.FieldStats {
+		if stats.TotalOccurrences == 0 || len(stats.Values) == 0 {
+			continue
+		}
+
+		// Calculate base metrics
+		entropy := stats.calculateEntropy()
+		maxEntropy := math.Log2(float64(len(stats.Values)))
+		normalizedEntropy := entropy / maxEntropy
+		inverseEntropy := 1 - normalizedEntropy
+
+		gini := stats.calculateGini()
+		maxFreq := stats.calculateMaxFrequency()
+
+		// Calculate reuse ratio based on field type
+		var reuseRatio float64
+		if stats.IsArray {
+			// For arrays, use total elements vs unique values
+			reuseRatio = float64(stats.TotalElements) / float64(len(stats.Values))
+		} else {
+			// For strings, use total occurrences vs unique values
+			reuseRatio = float64(stats.TotalOccurrences) / float64(len(stats.Values))
+		}
+
+		// Calculate final score
+		// For arrays (many-to-many), we weight reuse more heavily
+		// For strings (one-to-many), we weight concentration more heavily
+		var score float64
+		if stats.IsArray {
+			score = 0.3*inverseEntropy + 0.2*gini + 0.5*math.Tanh(math.Log(reuseRatio))
+		} else {
+			score = 0.4*inverseEntropy + 0.4*maxFreq + 0.2*math.Tanh(math.Log(reuseRatio))
+		}
+
+		// Only include if score is above threshold
+		if score > 0.3 {
+			candidates[field] = score
+			fmt.Printf("Field: %s (array: %v)\n", field, stats.IsArray)
+			fmt.Printf("  Entropy: %.3f (inverse: %.3f)\n", entropy, inverseEntropy)
+			fmt.Printf("  Gini: %.3f\n", gini)
+			fmt.Printf("  Max Freq: %.3f\n", maxFreq)
+			fmt.Printf("  Reuse Ratio: %.3f\n", reuseRatio)
+			fmt.Printf("  Final Score: %.3f\n", score)
+		}
+	}
+
+	return candidates
+}
+
+// GetFieldInfo returns detailed information about all detected fields
+func (d *TableDeriver) GetFieldInfo() map[string]*FieldInfo {
+	info := make(map[string]*FieldInfo)
+
+	for field, stats := range d.FieldStats {
+		// Skip fields with no data
+		if stats.TotalOccurrences == 0 {
+			continue
+		}
+
+		// Skip command fields
+		if len(field) > 0 && field[0] == '@' {
+			continue
+		}
+
+		fieldInfo := &FieldInfo{
+			Name:           field,
+			IsArray:        stats.IsArray,
+			ElementType:    stats.ElementType,
+			TotalRecords:   stats.TotalOccurrences,
+			TotalElements:  stats.TotalElements,
+			UniqueValues:   len(stats.Values),
+			ValueFrequency: stats.Values,
+		}
+
+		// Calculate metrics for categorization
+		entropy := stats.calculateEntropy()
+		maxEntropy := math.Log2(float64(len(stats.Values)))
+		normalizedEntropy := entropy / maxEntropy
+		inverseEntropy := 1 - normalizedEntropy
+		gini := stats.calculateGini()
+		maxFreq := stats.calculateMaxFrequency()
+
+		// Calculate reuse ratio based on field type
+		var reuseRatio float64
+		if stats.IsArray {
+			reuseRatio = float64(stats.TotalElements) / float64(len(stats.Values))
+		} else {
+			reuseRatio = float64(stats.TotalOccurrences) / float64(len(stats.Values))
+		}
+
+		// Calculate score
+		if stats.IsArray {
+			fieldInfo.Score = 0.3*inverseEntropy + 0.2*gini + 0.5*math.Tanh(math.Log(reuseRatio))
+		} else {
+			fieldInfo.Score = 0.4*inverseEntropy + 0.4*maxFreq + 0.2*math.Tanh(math.Log(reuseRatio))
+		}
+
+		// Categorize the field
+		if stats.IsArray && reuseRatio > 1.5 {
+			fieldInfo.Category = FieldCategoryManyToMany
+		} else if reuseRatio > 1.5 && maxFreq > 0.3 {
+			fieldInfo.Category = FieldCategoryOneToMany
+		} else if reuseRatio < 1.1 {
+			fieldInfo.Category = FieldCategoryUnique
+		} else {
+			fieldInfo.Category = FieldCategoryUnknown
+		}
+
+		info[field] = fieldInfo
+	}
+
+	return info
+}

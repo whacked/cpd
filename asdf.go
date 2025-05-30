@@ -600,15 +600,69 @@ func runJsonlDemo(filepath string) {
 	fmt.Printf("%s:\n", sectionHeader("Final Processed History (JSONL)"))
 	fmt.Printf("%s\n", strings.Repeat("-", 80))
 	for _, record := range processor.RecordHistory {
-		// Remove special fields for output
+		// Skip special records
+		if _, hasSchema := record["_schema"]; hasSchema {
+			continue
+		}
+		if _, hasMeta := record["_meta"]; hasMeta {
+			continue
+		}
+
+		// Create ordered output record
 		outputRecord := make(map[string]interface{})
-		for k, v := range record {
-			if !strings.HasPrefix(k, "_") {
-				outputRecord[k] = v
+		var orderedKeys []string
+
+		// Get schema properties if available
+		if schema, ok := processor.Schema.(map[string]interface{}); ok {
+			if props, ok := schema["properties"].(map[string]interface{}); ok {
+				// First add fields in schema order
+				for field := range props {
+					if value, exists := record[field]; exists {
+						outputRecord[field] = value
+						orderedKeys = append(orderedKeys, field)
+					}
+				}
 			}
 		}
-		jsonBytes, _ := json.Marshal(outputRecord)
-		fmt.Println(jsonOutput(string(jsonBytes)))
+
+		// Then add any fields not in schema
+		for field, value := range record {
+			if !strings.HasPrefix(field, "_") {
+				// Check if field exists in schema properties
+				if schema, ok := processor.Schema.(map[string]interface{}); ok {
+					if props, ok := schema["properties"].(map[string]interface{}); ok {
+						if _, exists := props[field]; !exists {
+							outputRecord[field] = value
+							orderedKeys = append(orderedKeys, field)
+						}
+					} else {
+						outputRecord[field] = value
+						orderedKeys = append(orderedKeys, field)
+					}
+				} else {
+					outputRecord[field] = value
+					orderedKeys = append(orderedKeys, field)
+				}
+			}
+		}
+
+		// Manually build JSONL output preserving key order
+		var jsonl strings.Builder
+		jsonl.WriteString("{")
+		for i, key := range orderedKeys {
+			if i > 0 {
+				jsonl.WriteString(",")
+			}
+			// Marshal the key
+			keyBytes, _ := json.Marshal(key)
+			jsonl.Write(keyBytes)
+			jsonl.WriteString(":")
+			// Marshal the value (using built-in marshaller for nested structures)
+			valBytes, _ := json.Marshal(outputRecord[key])
+			jsonl.Write(valBytes)
+		}
+		jsonl.WriteString("}")
+		fmt.Println(jsonOutput(jsonl.String()))
 	}
 }
 

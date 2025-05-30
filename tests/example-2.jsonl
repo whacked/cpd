@@ -28,3 +28,26 @@
 {"timestamp": "2024-10-01T11:00:00Z", "event": "@reset", "value": 0.0, "_meta": {"note": "reset command"}}
 {"timestamp": "2024-10-01T11:05:00Z", "event": "boot", "value": 1.0}
 {"timestamp": "2024-10-01T11:05:23Z", "value": 2.0, "category": "@merge"}
+
+{"timestamp": "2024-10-01T11:10:00Z", "event": "measure", "value": 1.2, "tags": ["outdoor", "morning"]}
+{"timestamp": "2024-10-01T11:15:00Z", "event": "measure", "value": 1.3, "tags": ["lab", "baseline"], "photos": ["img_001.jpg"]}
+{"timestamp": "2024-10-01T11:20:00Z", "event": "measure", "value": 1.4, "tags": [], "photos": []}
+{"timestamp": "2024-10-01T11:25:00Z", "event": "tick", "value": 1.5, "tags": ["stress-test"], "photos": ["img_002.jpg", "img_003.jpg"]}
+{"timestamp": "2024-10-01T11:30:00Z", "event": "tick", "value": 1.6}
+{"timestamp": "2024-10-01T11:35:00Z", "event": "tick", "value": 1.7, "tags": ["baseline"]}
+{"timestamp": "2024-10-01T11:40:00Z", "event": "shutdown", "value": 0.0, "tags": ["manual"], "photos": ["shutdown_marker.png"]}
+{"timestamp": "2024-10-01T11:45:00Z", "event": "boot", "value": 1.0, "tags": ["night", "recovery"], "photos": ["boot_001.jpg"]}
+{"timestamp": "2024-10-01T11:50:00Z", "event": "measure", "value": 1.1, "tags": ["lab"], "photos": ["img_004.jpg", "img_005.jpg"]}
+{"timestamp": "2024-10-01T11:55:00Z", "event": "measure", "value": 1.2, "photos": []}
+{"timestamp": "2024-10-01T12:00:00Z", "event": "tick", "value": 1.3, "tags": ["baseline", "outdoor"]}
+{"timestamp": "2024-10-01T12:05:00Z", "event": "tick", "value": 1.4}
+{"timestamp": "2024-10-01T12:10:00Z", "event": "measure", "value": 1.5, "photos": ["img_006.jpg"]}
+{"timestamp": "2024-10-01T12:15:00Z", "event": "measure", "value": 1.6, "tags": ["lab", "manual"]}
+{"timestamp": "2024-10-01T12:20:00Z", "event": "tick", "value": 1.7, "photos": ["img_007.jpg", "img_008.jpg", "img_009.jpg"]}
+{"timestamp": "2024-10-01T12:25:00Z", "event": "tick", "value": 1.8, "tags": []}
+{"timestamp": "2024-10-01T12:30:00Z", "event": "shutdown", "value": 0.0, "tags": ["manual", "night"], "photos": ["shutdown_end.png"]}
+{"timestamp": "2024-10-01T12:35:00Z", "event": "boot", "value": 1.0}
+{"timestamp": "2024-10-01T12:40:00Z", "event": "measure", "value": 1.1, "tags": ["morning"]}
+{"timestamp": "2024-10-01T12:45:00Z", "event": "measure", "value": 1.2, "tags": ["stress-test"], "photos": ["img_010.jpg"]}
+{"timestamp": "2024-10-01T12:50:00Z", "event": "tick", "value": 1.3, "photos": ["img_011.jpg"]}
+{"timestamp": "2024-10-01T12:55:00Z", "event": "tick", "value": 1.4, "tags": ["recovery"]}
