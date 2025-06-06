@@ -1,0 +1,57 @@
+# 🧪 TEST: basic.yaml
+#
+# Aims:
+# - Validate correct ingestion from flat JSONL to canonical YAML
+# - Ensure _schemas, _columns, and join-table inference (status) work as expected
+#
+# Expectations:
+# - All records have consistent keys: name, temperature, status
+# - The `status` field should be promoted into a join-table with string-to-ID mapping
+# - Schema must mark all three fields as required and infer correct types
+# - YAML should preserve original record key order and value types
+# - `data:` block uses full object form (not compacted arrays)
+
+#
+#
+# fail / warn	Join table promotion trigger
+# unknown	New enum — test compaction adapt
+# null status	Explicit null handling in schema
+# missing status	Ensure optional treatment applies
+# key reorder	_columns must control export
+# null number	Schema must allow nullable float
+
+
+_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: number
+        status:
+          type: [string, "null"]
+      required: [name, temperature]
+_columns:
+  - name
+  - temperature
+  - status
+status:
+  ok: 1
+  fail: 2
+  warn: 3
+  unknown: 4
+data:
+  - {name: alpha-1, temperature: 22.5, status: ok}
+  - {name: alpha-2, temperature: 23.0, status: ok}
+  - {name: beta-1, temperature: 19.8, status: fail}
+  - {name: beta-2, temperature: 20.0, status: warn}
+  - {name: gamma-1, temperature: 21.0, status: ok}
+  - {name: gamma-2, temperature: null, status: fail}
+  - {name: delta-1, temperature: 18.4, status: warn}
+  - {name: epsilon-1, temperature: 17.0, status: unknown}
+  - {name: zeta-1, temperature: 22.0, status: null}
+  - {name: eta-1, temperature: 25.0}
+
