@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/whacked/yamdb/pkg/types"
+	"github.com/GitRowin/orderedmapjson"
 )
 
 const (
@@ -33,6 +33,22 @@ const (
 	FieldCategoryCommand
 )
 
+func GetHumanFriendlyFieldCategory(category FieldCategory) string {
+	switch category {
+	case FieldCategoryManyToMany:
+		return "many-to-many"
+	case FieldCategoryOneToMany:
+		return "one-to-many"
+	case FieldCategoryUnique:
+		return "unique"
+	case FieldCategoryCommand:
+		return "command"
+	case FieldCategoryUnknown:
+		return "unknown"
+	}
+	return "unknown"
+}
+
 func GetCategoryString(category FieldCategory) string {
 	switch category {
 	case FieldCategoryManyToMany:
@@ -45,7 +61,7 @@ func GetCategoryString(category FieldCategory) string {
 	return "unknown"
 }
 
-// FieldInfo contains derived information about a field
+// FieldInfo holds metadata about a field
 type FieldInfo struct {
 	Name           string
 	Category       FieldCategory
@@ -80,10 +96,13 @@ func NewTableDeriver() *TableDeriver {
 }
 
 // ProcessHistory analyzes a slice of records to identify potential join tables
-func (d *TableDeriver) ProcessHistory(history []types.Record) error {
+func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) error {
 	// First pass: collect statistics for all fields
 	for _, record := range history {
-		for field, value := range record {
+		for el := record.Front(); el != nil; el = el.Next() {
+			field := el.Key
+			value := el.Value
+
 			// Skip special fields
 			if field[0] == '_' {
 				continue
@@ -210,17 +229,14 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 		maxEntropy := math.Log2(float64(len(stats.Values)))
 		normalizedEntropy := entropy / maxEntropy
 		inverseEntropy := 1 - normalizedEntropy
-
 		gini := stats.calculateGini()
 		maxFreq := stats.calculateMaxFrequency()
 
 		// Calculate reuse ratio based on field type
 		var reuseRatio float64
 		if stats.IsArray {
-			// For arrays, use total elements vs unique values
 			reuseRatio = float64(stats.TotalElements) / float64(len(stats.Values))
 		} else {
-			// For strings, use total occurrences vs unique values
 			reuseRatio = float64(stats.TotalOccurrences) / float64(len(stats.Values))
 		}
 
@@ -261,6 +277,7 @@ func (d *TableDeriver) GetFieldInfo() map[string]*FieldInfo {
 
 		// Skip command fields
 		if len(field) > 0 && field[0] == '@' {
+			fmt.Printf("skipping command field: %q\n", field)
 			continue
 		}
 
@@ -313,3 +330,91 @@ func (d *TableDeriver) GetFieldInfo() map[string]*FieldInfo {
 
 	return info
 }
+
+// GetJoinTableCandidates identifies fields that should be converted to join tables
+func GetJoinTableCandidates(fieldInfo map[string]*FieldInfo) map[string]bool {
+	candidates := make(map[string]bool)
+
+	for field, info := range fieldInfo {
+		// Calculate unique value ratio
+		uniqueRatio := float64(info.UniqueValues) / float64(info.TotalRecords)
+		if uniqueRatio < 0.3 && info.ElementType == "string" {
+			candidates[field] = true
+		}
+	}
+
+	return candidates
+}
+
+// GenerateSchema creates a JSON Schema from field info
+func GenerateSchema(fieldInfo map[string]*FieldInfo, joinCandidates map[string]bool) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type": "array",
+		"items": map[string]interface{}{
+			"type":       "object",
+			"properties": make(map[string]interface{}),
+			"required":   make([]string, 0),
+		},
+	}
+
+	props := schema["items"].(map[string]interface{})["properties"].(map[string]interface{})
+	// required := schema["items"].(map[string]interface{})["required"].([]string)
+
+	for field, info := range fieldInfo {
+		// Skip join table fields in compacted mode
+		if joinCandidates[field] {
+			continue
+		}
+
+		// Add property definition
+		propType := "string"
+		switch info.ElementType {
+		case "number":
+			propType = "number"
+		case "array":
+			propType = "array"
+		case "object":
+			propType = "object"
+		}
+
+		props[field] = map[string]interface{}{
+			"type": propType,
+		}
+
+		// TODO: Add to required fields if needed
+	}
+
+	return schema
+}
+
+// // ProcessHistory processes a record history to generate schema and join tables
+// func ProcessHistory(history []*orderedmapjson.AnyOrderedMap) (map[string]interface{}, map[string]map[string]int, error) {
+
+// 	fmt.Printf("history: %+v\n", history)
+// 	// Get field info
+// 	fieldInfo := GetFieldInfo(history)
+
+// 	fmt.Printf("fieldInfo: %+v\n", fieldInfo)
+
+// 	// Identify join table candidates
+// 	joinCandidates := GetJoinTableCandidates(fieldInfo)
+
+// 	// Generate schema
+// 	schema := GenerateSchema(fieldInfo, joinCandidates)
+
+// 	// Build join tables
+// 	joinTables := make(map[string]map[string]int)
+// 	for field := range joinCandidates {
+// 		joinTables[field] = make(map[string]int)
+// 		values := fieldInfo[field].UniqueValues
+// 		id := 1
+// 		for value := range values {
+// 			if strValue, ok := value.(string); ok {
+// 				joinTables[field][strValue] = id
+// 				id++
+// 			}
+// 		}
+// 	}
+
+// 	return schema, joinTables, nil
+// }

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/whacked/yamdb/pkg/types"
+	"github.com/GitRowin/orderedmapjson"
 )
 
 // ValueLookup tracks the mapping between values and their IDs in value tables
@@ -71,7 +71,7 @@ func GenerateSQLiteDDL(fieldInfo map[string]*FieldInfo, mainTableName string) st
 }
 
 // GenerateSQLiteInserts generates INSERT statements for all tables
-func GenerateSQLiteInserts(fieldInfo map[string]*FieldInfo, history []types.Record) (string, error) {
+func GenerateSQLiteInserts(fieldInfo map[string]*FieldInfo, history []*orderedmapjson.AnyOrderedMap) (string, error) {
 	// First, build value lookups for all categorical fields
 	valueLookups := make(map[string]*ValueLookup)
 	for field, info := range fieldInfo {
@@ -87,7 +87,9 @@ func GenerateSQLiteInserts(fieldInfo map[string]*FieldInfo, history []types.Reco
 
 	// First pass: collect all unique values and assign IDs
 	for _, record := range history {
-		for field, value := range record {
+		for el := record.Front(); el != nil; el = el.Next() {
+			field := el.Key
+			value := el.Value
 			// Skip special fields
 			if field[0] == '_' {
 				continue
@@ -134,10 +136,10 @@ func GenerateSQLiteInserts(fieldInfo map[string]*FieldInfo, history []types.Reco
 	// Second pass: generate INSERT statements for main table and join tables
 	for i, record := range history {
 		// Skip special records
-		if _, hasSchema := record["_schema"]; hasSchema {
+		if _, hasSchema := record.Get("_schema"); hasSchema {
 			continue
 		}
-		if _, hasMeta := record["_meta"]; hasMeta {
+		if _, hasMeta := record.Get("_meta"); hasMeta {
 			continue
 		}
 
@@ -151,7 +153,9 @@ func GenerateSQLiteInserts(fieldInfo map[string]*FieldInfo, history []types.Reco
 		vals = append(vals, fmt.Sprintf("%d", i+1))
 
 		// Process each field
-		for field, value := range record {
+		for el := record.Front(); el != nil; el = el.Next() {
+			field := el.Key
+			value := el.Value
 			// Skip special fields
 			if field[0] == '_' {
 				continue

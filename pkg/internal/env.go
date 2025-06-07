@@ -14,7 +14,7 @@ var DebugLevel = func() int {
 	return 0
 }()
 
-// debugLog prints debug messages if the current debug level is sufficient
+// DebugLog prints debug messages if the current debug level is sufficient
 func DebugLog(format string, args ...interface{}) {
 	if DebugLevel > 0 {
 		fmt.Printf("[DEBUG] "+format+"\n", args...)

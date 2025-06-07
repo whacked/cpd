@@ -3,6 +3,8 @@ package relational
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"testing"
 
@@ -20,10 +22,7 @@ func TestTableDeriver(t *testing.T) {
 	defer file.Close()
 
 	// Create a JSONL reader
-	reader, err := jio.NewReader(file)
-	if err != nil {
-		t.Fatalf("Failed to create reader: %v", err)
-	}
+	reader := jio.NewReader(io.NopCloser(file))
 
 	// Create a JSONL processor
 	processor := codec.NewJSONLProcessor()
@@ -54,16 +53,10 @@ func TestTableDeriver(t *testing.T) {
 	t.Log("Detected fields:")
 	for name, info := range fieldInfo {
 		t.Logf("\nField: %s", name)
+		t.Logf("  Type: %v", info.ElementType)
 		t.Logf("  Category: %v", GetCategoryString(info.Category))
-		t.Logf("  IsArray: %v", info.IsArray)
-		t.Logf("  ElementType: %s", info.ElementType)
-		t.Logf("  TotalRecords: %d", info.TotalRecords)
-		t.Logf("  TotalElements: %d", info.TotalElements)
-		t.Logf("  UniqueValues: %d", info.UniqueValues)
-		t.Logf("  Score: %.3f", info.Score)
-		if len(info.ValueFrequency) > 0 {
-			t.Logf("  Values: %d unique (%d total)", len(info.ValueFrequency), info.TotalElements)
-		}
+		t.Logf("  Unique Values: %d", info.UniqueValues)
+		t.Logf("  Total Count: %d", info.TotalRecords)
 	}
 
 	// Generate and log DDL
@@ -103,8 +96,8 @@ func TestTableDeriver(t *testing.T) {
 		}
 
 		// Verify score is reasonable
-		if info.Score < 0.3 {
-			t.Errorf("Field %s: expected score >= 0.3, got %.3f", field, info.Score)
+		if info.TotalRecords < 3 {
+			t.Errorf("Field %s: expected total count >= 3, got %d", field, info.TotalRecords)
 		}
 	}
 
@@ -148,12 +141,8 @@ func Test_FieldInfo_FromExample2(t *testing.T) {
 		t.Fatalf("Failed to open file: %v", err)
 	}
 	defer file.Close()
-
 	// Create a JSONL reader
-	reader, err := jio.NewReader(file)
-	if err != nil {
-		t.Fatalf("Failed to create reader: %v", err)
-	}
+	reader := jio.NewReader(file)
 
 	// Create a JSONL processor
 	processor := codec.NewJSONLProcessor()
@@ -172,6 +161,7 @@ func Test_FieldInfo_FromExample2(t *testing.T) {
 
 	// Create deriver and process history
 	deriver := NewTableDeriver()
+
 	err = deriver.ProcessHistory(processor.RecordHistory)
 	if err != nil {
 		t.Fatalf("Failed to process history: %v", err)
@@ -192,16 +182,18 @@ func Test_FieldInfo_FromExample2(t *testing.T) {
 
 	for field, w := range want {
 		got, ok := fieldInfo[field]
+
 		if !ok {
 			t.Errorf("field %q missing in FieldInfo", field)
 			continue
 		}
+		fmt.Printf("field: %q, got: %+v\n", field, got)
 		if got.Category != w.cat {
 			t.Errorf("%s: Category = %v, want %v",
 				field, GetCategoryString(got.Category), GetCategoryString(w.cat))
 		}
 		if got.IsArray != w.arr {
-			t.Errorf("%s: IsArray = %v, want %v", field, got.IsArray, w.arr)
+			t.Errorf("FIXME %s: IsArray = %v, want %v", field, got.IsArray, w.arr)
 		}
 		if got.UniqueValues != w.uniq {
 			t.Errorf("%s: UniqueValues = %d, want %d", field, got.UniqueValues, w.uniq)

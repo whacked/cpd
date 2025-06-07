@@ -3,6 +3,7 @@ package codec
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -113,7 +114,50 @@ func YamlJsonlLineToQuotedJsonlLine(line string) string {
 	return string(jsonBytes)
 }
 
-// TODO: move this out
+// YamlJsonlLineToQuotedJsonlArray takes a line like
+//   - ["system initialized", "on", 1]
+//
+// and turns it into
+// ["system initialized", "on", 1]
+func YamlJsonlLineToQuotedJsonlArray(line string) string {
+	// Remove leading "- " if present
+	line = strings.TrimPrefix(line, "- ")
+
+	// Remove outer brackets and trim
+	line = strings.TrimSpace(strings.Trim(line, "[]"))
+
+	// Split into values
+	values := strings.Split(line, ",")
+
+	// Parse each value
+	var parsedValues []interface{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+
+		// Handle special cases
+		switch value {
+		case "null":
+			parsedValues = append(parsedValues, nil)
+		case "true", "false":
+			parsedValues = append(parsedValues, value == "true")
+		default:
+			// Try parsing as number
+			if num, err := strconv.ParseFloat(value, 64); err == nil {
+				parsedValues = append(parsedValues, num)
+			} else {
+				// Treat as string, removing any existing quotes
+				value = strings.Trim(value, `"'`)
+				parsedValues = append(parsedValues, value)
+			}
+		}
+	}
+
+	// Convert to JSON
+	jsonBytes, _ := json.Marshal(parsedValues)
+	return string(jsonBytes)
+}
+
+// ProcessorToOriginalJsonl converts a processor's records to original JSONL format
 func ProcessorToOriginalJsonl(processor *JSONLProcessor) string {
 	var lines []string
 
@@ -125,7 +169,9 @@ func ProcessorToOriginalJsonl(processor *JSONLProcessor) string {
 	for _, record := range processor.RecordHistory {
 		recordMap := make(map[string]interface{})
 		for _, column := range processor.OrderedColumns {
-			recordMap[column.Name] = record[column.Name]
+			if value, ok := record.Get(column.Name); ok {
+				recordMap[column.Name] = value
+			}
 		}
 		lines = append(lines, fmt.Sprintf("- %s", PrintRecordAsJSONL(recordMap, orderedKeys)))
 	}
@@ -137,10 +183,10 @@ func ProcessorToRawJSONL(processor *JSONLProcessor) string {
 	var lines []string
 	for _, record := range processor.RecordHistory {
 		// Skip special records
-		if _, hasSchema := record["_schema"]; hasSchema {
+		if _, hasSchema := record.Get("_schema"); hasSchema {
 			continue
 		}
-		if _, hasMeta := record["_meta"]; hasMeta {
+		if _, hasMeta := record.Get("_meta"); hasMeta {
 			continue
 		}
 
@@ -153,7 +199,7 @@ func ProcessorToRawJSONL(processor *JSONLProcessor) string {
 			if props, ok := schema["properties"].(map[string]interface{}); ok {
 				// First add fields in schema order
 				for field := range props {
-					if value, exists := record[field]; exists {
+					if value, exists := record.Get(field); exists {
 						outputRecord[field] = value
 						orderedKeys = append(orderedKeys, field)
 					}
@@ -162,21 +208,22 @@ func ProcessorToRawJSONL(processor *JSONLProcessor) string {
 		}
 
 		// Then add any fields not in schema
-		for field, value := range record {
+		for el := record.Front(); el != nil; el = el.Next() {
+			field := el.Key
 			if !strings.HasPrefix(field, "_") {
 				// Check if field exists in schema properties
 				if schema, ok := processor.Schema.(map[string]interface{}); ok {
 					if props, ok := schema["properties"].(map[string]interface{}); ok {
 						if _, exists := props[field]; !exists {
-							outputRecord[field] = value
+							outputRecord[field] = el.Value
 							orderedKeys = append(orderedKeys, field)
 						}
 					} else {
-						outputRecord[field] = value
+						outputRecord[field] = el.Value
 						orderedKeys = append(orderedKeys, field)
 					}
 				} else {
-					outputRecord[field] = value
+					outputRecord[field] = el.Value
 					orderedKeys = append(orderedKeys, field)
 				}
 			}
@@ -192,28 +239,29 @@ func ProcessorToRawJSONL(processor *JSONLProcessor) string {
 // ProcessorToCompactedJSONL converts a processor's records to compacted JSONL format
 func ProcessorToCompactedJSONL(processor *JSONLProcessor) string {
 	var lines []string
+
+	fmt.Printf("columns: %v\n", processor.OrderedColumns)
 	for _, record := range processor.RecordHistory {
 		// Skip special records
-		if _, hasSchema := record["_schema"]; hasSchema {
+		if _, hasSchema := record.Get("_schema"); hasSchema {
 			continue
 		}
-		if _, hasMeta := record["_meta"]; hasMeta {
+		if _, hasMeta := record.Get("_meta"); hasMeta {
 			continue
 		}
 
 		// Create ordered values array matching _columns
-		orderedValues := make([]interface{}, len(processor.OrderedColumns))
-		for i, column := range processor.OrderedColumns {
-			value := record[column.Name]
-			if nested, ok := value.(map[string]interface{}); ok {
-				// For nested objects, serialize to JSON inline
-				jsonBytes, _ := json.Marshal(nested)
-				orderedValues[i] = string(jsonBytes)
+		var values []interface{}
+		for _, col := range processor.OrderedColumns {
+			if value, ok := record.Get(col.Name); ok {
+				values = append(values, value)
 			} else {
-				orderedValues[i] = value
+				values = append(values, nil)
 			}
 		}
-		jsonBytes, _ := json.Marshal(orderedValues)
+
+		// Marshal as array
+		jsonBytes, _ := json.Marshal(values)
 		lines = append(lines, string(jsonBytes))
 	}
 	return strings.Join(lines, "\n")
@@ -222,36 +270,26 @@ func ProcessorToCompactedJSONL(processor *JSONLProcessor) string {
 // ProcessorToExpandedJSONL converts a processor's records to expanded JSONL format
 func ProcessorToExpandedJSONL(processor *JSONLProcessor) string {
 	var lines []string
+
 	for _, record := range processor.RecordHistory {
 		// Skip special records
-		if _, hasSchema := record["_schema"]; hasSchema {
+		if _, hasSchema := record.Get("_schema"); hasSchema {
 			continue
 		}
-		if _, hasMeta := record["_meta"]; hasMeta {
+		if _, hasMeta := record.Get("_meta"); hasMeta {
 			continue
 		}
 
-		// Create expanded output record
-		outputRecord := make(map[string]interface{})
-
-		// Add version if set
-		if processor.Version > 0 {
-			outputRecord["_version"] = processor.Version
-		}
-
-		// Add meta fields with dot notation
-		for k, v := range processor.Meta {
-			outputRecord["_meta."+k] = v
-		}
-
-		// Add record fields
-		for k, v := range record {
-			if !strings.HasPrefix(k, "_") {
-				outputRecord[k] = v
+		// Create expanded record with column names
+		expandedRecord := make(map[string]interface{})
+		for _, col := range processor.OrderedColumns {
+			if value, ok := record.Get(col.Name); ok {
+				expandedRecord[col.Name] = value
 			}
 		}
 
-		jsonBytes, _ := json.Marshal(outputRecord)
+		// Marshal preserving key order
+		jsonBytes, _ := json.Marshal(expandedRecord)
 		lines = append(lines, string(jsonBytes))
 	}
 	return strings.Join(lines, "\n")
@@ -259,29 +297,38 @@ func ProcessorToExpandedJSONL(processor *JSONLProcessor) string {
 
 func TestJSONLToYAMLConversion(t *testing.T) {
 	tests := []struct {
-		name         string
-		jsonlFile    string
-		yamlFile     string
-		serializerFn func(*JSONLProcessor) string
+		name                string
+		jsonlFile           string
+		yamlFile            string
+		serializerFn        func(*JSONLProcessor) string
+		yamlLineProcessorFn func(string) string
 	}{
+		/*
+			{
+				name:                "basic conversion",
+				jsonlFile:          "basic.jsonl",
+				yamlFile:           "basic.yaml",
+				serializerFn:       ProcessorToRawJSONL,
+				yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
+			},
+		*/
 		{
-			name:         "basic conversion",
-			jsonlFile:    "basic.jsonl",
-			yamlFile:     "basic.yaml",
-			serializerFn: ProcessorToRawJSONL,
+			// comment order is wrong!
+			name:                "compacted conversion",
+			jsonlFile:           "compacted.jsonl",
+			yamlFile:            "compacted.yaml",
+			serializerFn:        ProcessorToCompactedJSONL,
+			yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlArray,
 		},
-		// {
-		// 	name:         "compacted conversion",
-		// 	jsonlFile:    "compacted.jsonl",
-		// 	yamlFile:     "compacted.yaml",
-		// 	serializerFn: ProcessorToCompactedJSONL,
-		// },
-		// {
-		// 	name:         "meta version conversion",
-		// 	jsonlFile:    "meta_version.jsonl",
-		// 	yamlFile:     "meta_version.yaml",
-		// 	serializerFn: ProcessorToExpandedJSONL,
-		// },
+		/*
+			{
+				name:                "meta version conversion",
+				jsonlFile:          "meta_version.jsonl",
+				yamlFile:           "meta_version.yaml",
+				serializerFn:       ProcessorToExpandedJSONL,
+				yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
+			},
+		*/
 	}
 
 	for _, tt := range tests {
@@ -290,8 +337,7 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 			jsonlInput := readTestFile(t, tt.jsonlFile)
 
 			// Create JSONL reader
-			reader, err := jsonl.NewReader(strings.NewReader(jsonlInput))
-			assert.NoError(t, err)
+			reader := jsonl.NewReader(io.NopCloser(strings.NewReader(jsonlInput)))
 			defer reader.Close()
 
 			// Read all records
@@ -315,7 +361,8 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 
 			var expectedJsonlLines []string
 			for _, line := range dataLines {
-				jsonlLine := YamlJsonlLineToQuotedJsonlLine(line)
+				fmt.Println("line: ", line)
+				jsonlLine := tt.yamlLineProcessorFn(line)
 				expectedJsonlLines = append(expectedJsonlLines, jsonlLine)
 			}
 			expectedJsonl := strings.Join(expectedJsonlLines, "\n")

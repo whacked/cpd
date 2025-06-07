@@ -31,8 +31,46 @@ func ExtractOrderedKeys(input string) ([]string, error) {
 	return keys, nil
 }
 
-func GetDataLines(filename string) ([]string, error) {
+// FIXME: how is this different from codec.ExtractOrderedKeys?
+func ExtractOrderedKeysNative(input string) ([]string, error) {
+	input = strings.TrimPrefix(strings.TrimSpace(input), "- ")
 
+	dec := json.NewDecoder(strings.NewReader(input))
+
+	t, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := t.(json.Delim); !ok || delim != '{' {
+		return nil, fmt.Errorf("expected '{', got %v", t)
+	}
+
+	var keys []string
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key := t.(string)
+		keys = append(keys, key)
+
+		// skip value
+		_, err = dec.Token()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+
+// GetDataLines reads a YAML file and extracts all data rows that appear after the "data:" key.
+// It preserves the order of the data rows and handles YAML-specific formatting:
+// - Removes trailing comments (lines starting with #)
+// - Removes the YAML list item prefix ("- ")
+// - Skips empty lines
+// - Only includes lines that are indented more than the "data:" line
+// Returns a slice of strings containing the cleaned data rows, or an error if the file cannot be read.
+func GetDataLines(filename string) ([]string, error) {
 	// Second pass: read file line by line to get data section order
 	file, err := os.Open(filename)
 	if err != nil {
@@ -157,7 +195,7 @@ func ParseRecordToValuesWithColumns(record string) (types.ValuesWithColumns, err
 			} else {
 				// Try to parse as number - use float64 to match JSON behavior
 				if matched, _ := regexp.MatchString(`^\d+$`, field); matched {
-					value, _ = strconv.ParseFloat(field, 64) // Changed from Atoi to ParseFloat
+					value, _ = strconv.ParseFloat(field, 64)
 					colType = types.TypeFloat
 				} else if matched, _ := regexp.MatchString(`^\d*\.\d+$`, field); matched {
 					value, _ = strconv.ParseFloat(field, 64)

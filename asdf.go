@@ -168,37 +168,6 @@ func printRecordGroup(group *types.RecordGroup) {
 	}
 }
 
-func ExtractOrderedKeys(input string) ([]string, error) {
-	input = strings.TrimPrefix(strings.TrimSpace(input), "- ")
-
-	dec := json.NewDecoder(strings.NewReader(input))
-
-	t, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	if delim, ok := t.(json.Delim); !ok || delim != '{' {
-		return nil, fmt.Errorf("expected '{', got %v", t)
-	}
-
-	var keys []string
-	for dec.More() {
-		t, err := dec.Token()
-		if err != nil {
-			return nil, err
-		}
-		key := t.(string)
-		keys = append(keys, key)
-
-		// skip value
-		_, err = dec.Token()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return keys, nil
-}
-
 // parseYamlWithOrder parses YAML while preserving field order
 func parseYamlWithOrder(filename string) (map[string]interface{}, []string, error) {
 	// First pass: parse YAML normally
@@ -462,7 +431,7 @@ func runYamlDemo() {
 		fmt.Printf("---      parsed: %v\n", parsed)
 
 		// Supplant the record with current schema
-		transformed, newSchema, changed, err := scm.SupplantRecord(current, parsed)
+		transformed, newSchema, changed, err := scm.SupplantRecord(group, parsed)
 		if err != nil {
 			log.Printf("Warning: Failed to supplant record at line %d: %v", i, err)
 			continue
@@ -512,10 +481,7 @@ func runJsonlDemo(filepath string, verbosity int) {
 	defer file.Close()
 
 	// Create a JSONL reader
-	reader, err := jio.NewReader(file)
-	if err != nil {
-		log.Fatal(err)
-	}
+	reader := jio.NewReader(io.NopCloser(file))
 
 	// Create a JSONL processor
 	processor := codec.NewJSONLProcessor()
@@ -604,8 +570,8 @@ func runJsonlDemo(filepath string, verbosity int) {
 				if result.Schema != nil {
 					fmt.Printf("  %s: present\n", sectionHeader("Schema"))
 				}
-				if len(result.Meta) > 0 {
-					fmt.Printf("  %s: %d fields\n", sectionHeader("Meta"), len(result.Meta))
+				if result.Meta != nil {
+					fmt.Printf("  %s: %d fields\n", sectionHeader("Meta"), result.Meta.Len())
 				}
 			}
 		}
@@ -620,10 +586,10 @@ func runJsonlDemo(filepath string, verbosity int) {
 	}
 	for _, record := range processor.RecordHistory {
 		// Skip special records
-		if _, hasSchema := record["_schema"]; hasSchema {
+		if _, hasSchema := record.Get("_schema"); hasSchema {
 			continue
 		}
-		if _, hasMeta := record["_meta"]; hasMeta {
+		if _, hasMeta := record.Get("_meta"); hasMeta {
 			continue
 		}
 
@@ -650,7 +616,7 @@ func runJsonlDemo(filepath string, verbosity int) {
 			if props, ok := schema["properties"].(map[string]interface{}); ok {
 				// First add fields in schema order
 				for field := range props {
-					if value, exists := record[field]; exists {
+					if value, exists := record.Get(field); exists {
 						outputRecord[field] = value
 						orderedKeys = append(orderedKeys, field)
 					}
@@ -659,21 +625,22 @@ func runJsonlDemo(filepath string, verbosity int) {
 		}
 
 		// Then add any fields not in schema
-		for field, value := range record {
+		for el := record.Front(); el != nil; el = el.Next() {
+			field := el.Key
 			if !strings.HasPrefix(field, "_") {
 				// Check if field exists in schema properties
 				if schema, ok := processor.Schema.(map[string]interface{}); ok {
 					if props, ok := schema["properties"].(map[string]interface{}); ok {
 						if _, exists := props[field]; !exists {
-							outputRecord[field] = value
+							outputRecord[field] = el.Value
 							orderedKeys = append(orderedKeys, field)
 						}
 					} else {
-						outputRecord[field] = value
+						outputRecord[field] = el.Value
 						orderedKeys = append(orderedKeys, field)
 					}
 				} else {
-					outputRecord[field] = value
+					outputRecord[field] = el.Value
 					orderedKeys = append(orderedKeys, field)
 				}
 			}
@@ -708,10 +675,7 @@ func runJsonToYamlDemo(filepath string) {
 	defer file.Close()
 
 	// Create a JSONL reader
-	reader, err := jio.NewReader(file)
-	if err != nil {
-		log.Fatal(err)
-	}
+	reader := jio.NewReader(io.NopCloser(file))
 
 	// Create a JSONL processor
 	processor := codec.NewJSONLProcessor()
@@ -807,10 +771,10 @@ func runJsonToYamlDemo(filepath string) {
 	yamlBuilder.WriteString("data:\n")
 	for _, record := range processor.RecordHistory {
 		// Skip special records
-		if _, hasSchema := record["_schema"]; hasSchema {
+		if _, hasSchema := record.Get("_schema"); hasSchema {
 			continue
 		}
-		if _, hasMeta := record["_meta"]; hasMeta {
+		if _, hasMeta := record.Get("_meta"); hasMeta {
 			continue
 		}
 
@@ -818,63 +782,17 @@ func runJsonToYamlDemo(filepath string) {
 		outputRecord := make(map[string]interface{})
 		var orderedKeys []string
 
-		// Get schema properties if available
-		if schema, ok := processor.Schema.(map[string]interface{}); ok {
-			if props, ok := schema["properties"].(map[string]interface{}); ok {
-				// First add fields in schema order
-				for field := range props {
-					if value, exists := record[field]; exists {
-						outputRecord[field] = value
-						orderedKeys = append(orderedKeys, field)
-					}
-				}
-			}
-		}
-
-		// Then add any fields not in schema
-		for field, value := range record {
-			if !strings.HasPrefix(field, "_") {
-				// Check if field exists in schema properties
-				if schema, ok := processor.Schema.(map[string]interface{}); ok {
-					if props, ok := schema["properties"].(map[string]interface{}); ok {
-						if _, exists := props[field]; !exists {
-							outputRecord[field] = value
-							orderedKeys = append(orderedKeys, field)
-						}
-					} else {
-						outputRecord[field] = value
-						orderedKeys = append(orderedKeys, field)
-					}
-				} else {
-					outputRecord[field] = value
-					orderedKeys = append(orderedKeys, field)
-				}
+		// Use the processor's orderedColumns for deterministic ordering
+		for _, col := range processor.GetOrderedColumns() {
+			if value, exists := record.Get(col.Name); exists {
+				outputRecord[col.Name] = value
+				orderedKeys = append(orderedKeys, col.Name)
 			}
 		}
 
 		// Write record as YAML
 		yamlBuilder.WriteString("  - ")
-		if len(orderedKeys) == 1 {
-			// Single value, write directly
-			valBytes, _ := yaml.Marshal(outputRecord[orderedKeys[0]])
-			yamlBuilder.Write(valBytes)
-		} else {
-			// Multiple values, write as object
-			yamlBuilder.WriteString("{")
-			for i, key := range orderedKeys {
-				if i > 0 {
-					yamlBuilder.WriteString(",")
-				}
-				// Marshal the key
-				keyBytes, _ := json.Marshal(key)
-				yamlBuilder.Write(keyBytes)
-				yamlBuilder.WriteString(":")
-				// Marshal the value
-				valBytes, _ := json.Marshal(outputRecord[key])
-				yamlBuilder.Write(valBytes)
-			}
-			yamlBuilder.WriteString("}")
-		}
+		yamlBuilder.WriteString(codec.PrintRecordAsJSONL(outputRecord, orderedKeys))
 		yamlBuilder.WriteString("\n")
 	}
 
@@ -898,6 +816,9 @@ func main() {
 		}
 	}
 
-	// runJsonlDemo(filepath, 0)
-	runJsonToYamlDemo(filepath)
+	if false {
+		runJsonlDemo(filepath, 0)
+	} else {
+		runJsonToYamlDemo(filepath)
+	}
 }

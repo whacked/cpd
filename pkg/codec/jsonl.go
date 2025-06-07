@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/GitRowin/orderedmapjson"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/whacked/yamdb/pkg/internal"
 	"github.com/whacked/yamdb/pkg/types"
@@ -15,9 +16,9 @@ import (
 type ProcessedRecord struct {
 	Version *int
 	Schema  interface{} // Raw JSON Schema object
-	Meta    map[string]interface{}
+	Meta    *orderedmapjson.AnyOrderedMap
 	// Data    *types.Record // if it's a data row
-	Data *map[string]interface{}
+	Data *orderedmapjson.AnyOrderedMap
 }
 
 // RecordToJSONL converts a RecordWithMetadata to a JSONL string, only including the record data
@@ -80,6 +81,41 @@ func InferType(val interface{}) types.ColumnType {
 	}
 }
 
+func PrintRecordAsJSONL(recordMap map[string]interface{}, orderedKeys []string) string {
+	if len(orderedKeys) == 1 {
+		valBytes, _ := json.Marshal(recordMap)
+		return string(valBytes)
+	}
+
+	// Create a custom encoder that preserves order
+	buf := new(strings.Builder)
+
+	enc := json.NewEncoder(buf)
+	enc.SetIndent("", "")
+
+	// Write the opening brace
+	buf.WriteString("{")
+
+	// Write each field in order
+	for j, key := range orderedKeys {
+		if j > 0 {
+			buf.WriteString(",")
+		}
+		// Marshal the key
+		keyBytes, _ := json.Marshal(key)
+		buf.Write(keyBytes)
+		buf.WriteString(":")
+		// Marshal the value
+		valBytes, _ := json.Marshal(recordMap[key])
+		buf.Write(valBytes)
+	}
+
+	// Write the closing brace
+	buf.WriteString("}")
+
+	return buf.String()
+}
+
 // PrintRecordGroupAsJSONL prints a group of records in JSON Lines format
 func PrintRecordGroupAsJSONL(group *types.RecordGroup) {
 	fmt.Println("\n=== JSON Lines Format ===")
@@ -104,32 +140,7 @@ func PrintRecordGroupAsJSONL(group *types.RecordGroup) {
 			orderedKeys = append(orderedKeys, key)
 		}
 
-		// Create a custom encoder that preserves order
-		buf := new(strings.Builder)
-		enc := json.NewEncoder(buf)
-		enc.SetIndent("", "")
-
-		// Write the opening brace
-		buf.WriteString("{")
-
-		// Write each field in order
-		for j, key := range orderedKeys {
-			if j > 0 {
-				buf.WriteString(",")
-			}
-			// Marshal the key
-			keyBytes, _ := json.Marshal(key)
-			buf.Write(keyBytes)
-			buf.WriteString(":")
-			// Marshal the value
-			valBytes, _ := json.Marshal(recordMap[key])
-			buf.Write(valBytes)
-		}
-
-		// Write the closing brace
-		buf.WriteString("}")
-
-		fmt.Println(buf.String())
+		fmt.Println(PrintRecordAsJSONL(recordMap, orderedKeys))
 	}
 	fmt.Println()
 }
@@ -139,9 +150,9 @@ type JSONLProcessResult struct {
 	// One of these is set depending on the directive type.
 	Version   *int
 	Schema    []types.ColumnInfo
-	Meta      map[string]interface{}
-	Data      *types.Record // if it's a data row
-	IsCommand bool          // for "@..." commands, future extension
+	Meta      *orderedmapjson.AnyOrderedMap
+	Data      *orderedmapjson.AnyOrderedMap // if it's a data row
+	IsCommand bool                          // for "@..." commands, future extension
 }
 
 func intPtr(i int) *int {
@@ -150,32 +161,33 @@ func intPtr(i int) *int {
 
 // ParseSchemaObject converts a valid JSON Schema object into []ColumnInfo.
 // It expects a schema with type: "object" and a "properties" map.
-func ParseSchemaObject(raw interface{}) ([]types.ColumnInfo, error) {
-	schema, ok := raw.(map[string]interface{})
+func ParseSchemaObject(schemaMap *orderedmapjson.AnyOrderedMap) ([]types.ColumnInfo, error) {
+	schemaType, ok := schemaMap.Get("type")
 	if !ok {
-		return nil, fmt.Errorf("_schema must be a JSON object")
+		return nil, fmt.Errorf("_schema missing 'type'")
 	}
-
-	if schema["type"] != "object" {
+	if schemaType != "object" {
 		return nil, fmt.Errorf("_schema must be of type 'object'")
 	}
 
-	propsRaw, ok := schema["properties"]
+	propsRaw, ok := schemaMap.Get("properties")
 	if !ok {
 		return nil, fmt.Errorf("_schema missing 'properties'")
 	}
 
-	props, ok := propsRaw.(map[string]interface{})
+	props, ok := propsRaw.(*orderedmapjson.AnyOrderedMap)
 	if !ok {
 		return nil, fmt.Errorf("'properties' must be an object")
 	}
 
 	// We extract in insertion order only if ordering is preserved externally
 	var cols []types.ColumnInfo
-	for name, defRaw := range props {
+	for el := props.Front(); el != nil; el = el.Next() {
+		name := el.Key
+		defRaw := el.Value
 		colType := types.TypeString // default
-		if def, ok := defRaw.(map[string]interface{}); ok {
-			if typeVal, ok := def["type"]; ok {
+		if def, ok := defRaw.(*orderedmapjson.AnyOrderedMap); ok {
+			if typeVal, ok := def.Get("type"); ok {
 				colType = mapJSONSchemaTypeToColumnType(typeVal)
 			}
 		}
@@ -218,11 +230,11 @@ func mapJSONSchemaTypeToColumnType(schemaType interface{}) types.ColumnType {
 // ProcessJSONLRecord interprets one line of JSONL as a Record.
 // It detects and extracts reserved keywords (_version, _schema, _meta),
 // and returns a structured result. Everything else is passed through as data.
-func ProcessJSONLRecord(r types.Record) (*JSONLProcessResult, error) {
+func ProcessJSONLRecord(r *orderedmapjson.AnyOrderedMap) (*JSONLProcessResult, error) {
 	result := &JSONLProcessResult{}
 
 	// Check for version
-	if v, ok := r["_version"]; ok {
+	if v, ok := r.Get("_version"); ok {
 		internal.DebugLog("Detected _version field: %v", v)
 		versionNum, ok := v.(float64) // JSON numbers decode as float64
 		if !ok {
@@ -233,57 +245,51 @@ func ProcessJSONLRecord(r types.Record) (*JSONLProcessResult, error) {
 	}
 
 	// Check for schema
-	if schemaRaw, ok := r["_schema"]; ok {
+	if schemaRaw, ok := r.Get("_schema"); ok {
 		internal.DebugLog("Detected _schema field: %v", schemaRaw)
-		cols, err := ParseSchemaObject(schemaRaw)
-		if err != nil {
-			return nil, fmt.Errorf("invalid _schema: %w", err)
+		schemaMap, ok := schemaRaw.(*orderedmapjson.AnyOrderedMap)
+		if !ok {
+			return nil, fmt.Errorf("_schema must be an object")
 		}
-		internal.DebugLog("Parsed schema with %d columns:", len(cols))
-		for _, col := range cols {
-			internal.DebugLog("  - %s (%s)", col.Name, types.ColumnTypeToString(col.Type))
+		cols, err := ParseSchemaObject(schemaMap)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing schema: %w", err)
 		}
 		result.Schema = cols
 	}
 
 	// Check for meta
-	if metaRaw, ok := r["_meta"]; ok {
+	if metaRaw, ok := r.Get("_meta"); ok {
 		internal.DebugLog("Detected _meta field: %v", metaRaw)
-		meta, ok := metaRaw.(map[string]interface{})
-		if !ok {
+		if meta, ok := metaRaw.(*orderedmapjson.AnyOrderedMap); ok {
+			result.Meta = meta
+		} else {
 			return nil, fmt.Errorf("_meta must be an object")
 		}
-		internal.DebugLog("Parsed meta with %d fields:", len(meta))
-		for k, v := range meta {
-			internal.DebugLog("  - %s: %v", k, v)
-		}
-		result.Meta = meta
 	}
 
-	// Check for commands
-	for _, v := range r {
-		if str, ok := v.(string); ok && strings.HasPrefix(str, "@") {
-			internal.DebugLog("Detected command: %s", str)
-			result.Data = &r
-			result.IsCommand = true
-			return result, nil // Commands are the only case where we return early
+	// Create a new map without special fields for data
+	data := orderedmapjson.NewAnyOrderedMap()
+	hasData := false
+	for el := r.Front(); el != nil; el = el.Next() {
+		if el.Key != "_version" && el.Key != "_schema" && el.Key != "_meta" {
+			data.Set(el.Key, el.Value)
+			hasData = true
 		}
 	}
-
-	// If we have any special fields, return the result
-	if result.Version != nil || result.Schema != nil || result.Meta != nil {
-		return result, nil
+	if hasData {
+		result.Data = data
+	} else {
+		result.Data = nil
 	}
 
-	// Default: a normal data row
-	result.Data = &r
 	return result, nil
 }
 
 // CategoryProcessor defines how to handle a special category
 type CategoryProcessor interface {
 	// Process handles the special category logic
-	Process(record types.Record) error
+	Process(record *orderedmapjson.AnyOrderedMap) error
 	// Category returns the category name this processor handles
 	Category() string
 }
@@ -297,16 +303,22 @@ type JSONLProcessor struct {
 	// Category processors
 	categoryProcessors []CategoryProcessor
 	// Record history for lookback operations
-	RecordHistory []types.Record
-	currentIndex  int
+	RecordHistory []*orderedmapjson.AnyOrderedMap
+	CurrentIndex  int
+	// Canonical column order tracking
+	OrderedColumns []types.ColumnInfo // Maintains the order of columns as they appear in records
+	// Join tables for enum-like fields
+	JoinTables map[string]map[string]int // field name -> value -> id
 }
 
 // NewJSONLProcessor creates a new JSONL processor
 func NewJSONLProcessor() *JSONLProcessor {
 	processor := &JSONLProcessor{
-		Meta:          make(map[string]interface{}),
-		RecordHistory: make([]types.Record, 0),
-		currentIndex:  -1,
+		Meta:           make(map[string]interface{}),
+		RecordHistory:  make([]*orderedmapjson.AnyOrderedMap, 0),
+		CurrentIndex:   -1,
+		OrderedColumns: make([]types.ColumnInfo, 0),
+		JoinTables:     make(map[string]map[string]int),
 	}
 
 	// Create and initialize category processors
@@ -327,24 +339,28 @@ func (p *JSONLProcessor) RegisterCategoryProcessor(processor CategoryProcessor) 
 }
 
 // processCategories handles any special categories in the record
-func (p *JSONLProcessor) processCategories(record types.Record) error {
-	if category, ok := record["category"].(string); ok {
-		// Split categories by comma
-		categories := strings.Split(category, ",")
-		for _, cat := range categories {
-			cat = strings.TrimSpace(cat)
-			// Skip if not a special category
-			if !strings.HasPrefix(cat, "@") {
-				continue
-			}
+func (p *JSONLProcessor) processCategories(record *orderedmapjson.AnyOrderedMap) error {
+	if category, ok := record.Get("category"); ok {
 
-			// Find and use appropriate processor
-			for _, processor := range p.categoryProcessors {
-				if processor.Category() == cat {
-					if err := processor.Process(record); err != nil {
-						return fmt.Errorf("failed to process category %s: %w", cat, err)
+		if catStr, ok := category.(string); ok {
+			// Split categories by comma
+			categories := strings.Split(catStr, ",")
+			for _, cat := range categories {
+				cat = strings.TrimSpace(cat)
+				// Skip if not a special category
+				if !strings.HasPrefix(cat, "@") {
+					continue
+				}
+
+				// Find and use appropriate processor
+				for _, processor := range p.categoryProcessors {
+					if processor.Category() == cat {
+						fmt.Printf("Processing category: %s\n", cat)
+						if err := processor.Process(record); err != nil {
+							return fmt.Errorf("failed to process category %s: %w", cat, err)
+						}
+						internal.DebugLog("Processed category: %s", cat)
 					}
-					internal.DebugLog("Processed category: %s", cat)
 				}
 			}
 		}
@@ -354,11 +370,14 @@ func (p *JSONLProcessor) processCategories(record types.Record) error {
 
 // GetRecordAt returns the record at the specified index relative to current
 // offset: 0 is current record, -1 is previous, -2 is two back, etc.
-func (p *JSONLProcessor) GetRecordAt(offset int) (types.Record, error) {
-	targetIndex := p.currentIndex + offset
+func (p *JSONLProcessor) GetRecordAt(offset int) (*orderedmapjson.AnyOrderedMap, error) {
+	targetIndex := p.CurrentIndex + offset
+	if offset < 0 {
+		targetIndex += 1
+	}
 	if targetIndex < 0 || targetIndex >= len(p.RecordHistory) {
 		return nil, fmt.Errorf("no record at offset %d (current: %d, history: %d)",
-			offset, p.currentIndex, len(p.RecordHistory))
+			offset, p.CurrentIndex, len(p.RecordHistory))
 	}
 	return p.RecordHistory[targetIndex], nil
 }
@@ -372,147 +391,104 @@ func (p *MergeCategoryProcessor) Category() string {
 	return "@merge"
 }
 
-func (p *MergeCategoryProcessor) Process(record types.Record) error {
-	// Get previous record
+func (p *MergeCategoryProcessor) Process(record *orderedmapjson.AnyOrderedMap) error {
+	fmt.Printf("Processing @merge category...\n")
+
 	prevRecord, err := p.processor.GetRecordAt(-1)
 	if err != nil {
-		return fmt.Errorf("no previous record to merge with: %w", err)
+		return err
+	}
+	if prevRecord == nil {
+		return fmt.Errorf("no previous record to merge with")
+	}
+	fmt.Printf("Previous record: %+v\n", prevRecord)
+
+	merged := orderedmapjson.NewAnyOrderedMap()
+
+	for el := prevRecord.Front(); el != nil; el = el.Next() {
+		merged.Set(el.Key, el.Value)
 	}
 
-	// Create a new record by merging previous into current
-	merged := make(types.Record)
-
-	// First copy all fields from previous record
-	for k, v := range prevRecord {
-		merged[k] = v
+	for el := record.Front(); el != nil; el = el.Next() {
+		merged.Set(el.Key, el.Value)
 	}
 
-	// Then overlay with current record's fields
-	for k, v := range record {
-		// Skip special fields, category, and timestamp
-		if strings.HasPrefix(k, "_") || k == "category" || k == "timestamp" {
-			continue
-		}
-		merged[k] = v
-	}
-
-	// Update the previous record with merged data
-	p.processor.RecordHistory[p.processor.currentIndex-1] = merged
-
-	// Remove the current record from history (it's been swallowed)
-	p.processor.RecordHistory = p.processor.RecordHistory[:p.processor.currentIndex]
-	p.processor.currentIndex--
-
-	internal.DebugLog("Merged record at index %d: %v", p.processor.currentIndex, merged)
-	internal.DebugLog("Current record swallowed, history length now: %d", len(p.processor.RecordHistory))
+	*record = *merged
 	return nil
 }
 
-// ProcessRecord processes a single record, updating internal state
-func (p *JSONLProcessor) ProcessRecord(record types.Record) (*ProcessedRecord, error) {
-	result := &ProcessedRecord{
-		Version: &p.Version,
-		Schema:  p.Schema,
-		Meta:    p.Meta,
-	}
+// GetOrderedColumns returns the canonical column order as seen in processed records
+func (p *JSONLProcessor) GetOrderedColumns() []types.ColumnInfo {
+	return p.OrderedColumns
+}
 
-	// Process special fields
-	if version, ok := record["_version"]; ok {
-		if v, ok := version.(float64); ok {
-			p.Version = int(v)
-			result.Version = &p.Version
-			internal.DebugLog("Updated version to: %d", p.Version)
+// updateOrderedColumns updates the canonical column order with new columns from a record
+func (p *JSONLProcessor) updateOrderedColumns(record *orderedmapjson.AnyOrderedMap) {
+	// Create a map to track which columns we've already seen
+	seen := make(map[string]bool)
+
+	// First add any existing columns that are still present
+	var newColumns []types.ColumnInfo
+	for _, col := range p.OrderedColumns {
+		if _, ok := record.Get(col.Name); ok {
+			newColumns = append(newColumns, col)
+			seen[col.Name] = true
 		}
 	}
 
-	if schema, ok := record["_schema"]; ok {
-		// Store the raw schema object
-		p.Schema = schema
-		result.Schema = schema
-
-		// Create and cache the validator
-		schemaBytes, err := json.Marshal(schema)
-		if err != nil {
-			fmt.Printf("[WARN] Failed to create JSON Schema: %v\n", err)
-		} else {
-			validator, err := jsonschema.CompileString("schema.json", string(schemaBytes))
-			if err != nil {
-				fmt.Printf("[WARN] Failed to compile JSON Schema: %v\n", err)
-			} else {
-				p.validator = validator
-				internal.DebugLog("Updated schema and cached validator")
-			}
+	// Then add any new columns
+	for el := record.Front(); el != nil; el = el.Next() {
+		key := el.Key
+		if !seen[key] {
+			newColumns = append(newColumns, types.ColumnInfo{
+				Name: key,
+				Type: InferType(el.Value),
+			})
+			seen[key] = true
 		}
 	}
 
-	if meta, ok := record["_meta"]; ok {
-		if m, ok := meta.(map[string]interface{}); ok {
-			// Merge new meta with existing
-			for k, v := range m {
-				p.Meta[k] = v
-			}
-			internal.DebugLog("Updated meta: %v", p.Meta)
-			result.Meta = p.Meta
-		}
-	}
+	p.OrderedColumns = newColumns
+}
 
-	// Check if record has any non-special fields
-	hasData := false
-	for k := range record {
-		if !strings.HasPrefix(k, "_") {
-			hasData = true
-			break
-		}
-	}
+// ProcessRecord processes a single JSONL record
+func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*ProcessedRecord, error) {
 
-	// Only add to history if it has data
-	if hasData {
-		// Add record to history BEFORE processing categories
-		p.RecordHistory = append(p.RecordHistory, record)
-		p.currentIndex = len(p.RecordHistory) - 1
-		internal.DebugLog("Added record to history (length: %d)", len(p.RecordHistory))
-	} else {
-		internal.DebugLog("Skipping empty record (only special fields)")
-	}
-
-	// Process any special categories
+	// Process any category-specific logic
 	if err := p.processCategories(record); err != nil {
+		fmt.Printf("ERROR processing categories: %v\n", err)
 		return nil, err
 	}
 
-	// If this is a data record (not just special fields), add it to the result
-	if hasData {
-		// Remove special fields from the plainData record
-		plainData := make(map[string]interface{})
-		for k, v := range record {
-			if !strings.HasPrefix(k, "_") {
-				plainData[k] = v
-			}
-		}
-		if len(plainData) > 0 {
-			result.Data = &plainData
+	p.updateOrderedColumns(record)
 
-			// Validate against schema if we have one
-			if p.validator != nil {
-				internal.DebugLog("Validating record [%v]", plainData)
+	// Process the record
+	result, err := ProcessJSONLRecord(record)
 
-				// Validate the record
-				if err := p.validator.Validate(plainData); err != nil {
-					fmt.Printf("[WARN] Record validation failed for %v: %v\n", plainData, err)
-				} else {
-					internal.DebugLog("Record validated successfully")
-				}
-			}
-		} else {
-			internal.DebugLog("Skipping validation for directive-only record")
-		}
+	if err != nil {
+		fmt.Printf("ERROR processing record: %v\n", err)
+		return nil, err
 	}
 
-	return result, nil
+	// Add to history if it's a data record
+	if result.Data != nil {
+		p.RecordHistory = append(p.RecordHistory, result.Data)
+		p.CurrentIndex = len(p.RecordHistory) - 1
+	} else {
+		fmt.Printf("\nSkipping history - not a data record:")
+		fmt.Printf("\n                                    : %+v\n", result)
+	}
+
+	return &ProcessedRecord{
+		Version: result.Version,
+		Schema:  result.Schema,
+		Meta:    result.Meta,
+		Data:    result.Data,
+	}, nil
 }
 
-// ProcessRecords processes multiple records while maintaining state
-func (p *JSONLProcessor) ProcessRecords(records []types.Record) ([]*ProcessedRecord, error) {
+// ProcessRecords processes multiple JSONL records
+func (p *JSONLProcessor) ProcessRecords(records []*orderedmapjson.AnyOrderedMap) ([]*ProcessedRecord, error) {
 	var results []*ProcessedRecord
 	for _, record := range records {
 		result, err := p.ProcessRecord(record)

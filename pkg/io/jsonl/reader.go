@@ -7,29 +7,32 @@ import (
 	"io"
 	"strings"
 
-	yamdbio "github.com/whacked/yamdb/pkg/io"
-	"github.com/whacked/yamdb/pkg/types"
+	"github.com/GitRowin/orderedmapjson"
 )
 
-type jsonlReader struct {
-	scanner *bufio.Scanner
-	closer  io.Closer // for closing underlying file if needed
+// Reader provides a way to read JSONL records from an io.Reader
+type Reader interface {
+	Read() (*orderedmapjson.AnyOrderedMap, error)
+	ReadAll() ([]*orderedmapjson.AnyOrderedMap, error)
+	Close() error
 }
 
-func NewReader(r io.Reader, opts ...yamdbio.ReaderOption) (yamdbio.Reader, error) {
-	scanner := bufio.NewScanner(r)
-	reader := &jsonlReader{
-		scanner: scanner,
+// jsonlReader implements the Reader interface
+type jsonlReader struct {
+	scanner *bufio.Scanner
+	closer  io.Closer
+}
+
+// NewReader creates a new JSONL reader
+func NewReader(r io.ReadCloser) Reader {
+	return &jsonlReader{
+		scanner: bufio.NewScanner(r),
+		closer:  r,
 	}
-	// Optionally set r as closer if it implements io.Closer
-	if c, ok := r.(io.Closer); ok {
-		reader.closer = c
-	}
-	return reader, nil
 }
 
 // Read implements our custom record reader interface
-func (r *jsonlReader) Read() (types.Record, error) {
+func (r *jsonlReader) Read() (*orderedmapjson.AnyOrderedMap, error) {
 	// Read next data line
 	for r.scanner.Scan() {
 		line := r.scanner.Text()
@@ -42,12 +45,18 @@ func (r *jsonlReader) Read() (types.Record, error) {
 			continue
 		}
 
-		// Parse the record
-		var record types.Record
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
+		// Trim out trailing comments
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			line = line[:idx]
+		}
+
+		// First parse into ordered map to preserve key order
+		var orderedRecord *orderedmapjson.AnyOrderedMap
+		if err := json.Unmarshal([]byte(line), &orderedRecord); err != nil {
 			return nil, fmt.Errorf("failed to decode record: %w (line: %q)", err, line)
 		}
-		return record, nil
+
+		return orderedRecord, nil
 	}
 
 	if err := r.scanner.Err(); err != nil {
@@ -56,8 +65,9 @@ func (r *jsonlReader) Read() (types.Record, error) {
 	return nil, io.EOF
 }
 
-func (r *jsonlReader) ReadAll() ([]types.Record, error) {
-	var records []types.Record
+// ReadAll reads all records from the reader
+func (r *jsonlReader) ReadAll() ([]*orderedmapjson.AnyOrderedMap, error) {
+	var records []*orderedmapjson.AnyOrderedMap
 	for {
 		record, err := r.Read()
 		if err == io.EOF {
@@ -72,6 +82,7 @@ func (r *jsonlReader) ReadAll() ([]types.Record, error) {
 	return records, nil
 }
 
+// Close implements io.Closer
 func (r *jsonlReader) Close() error {
 	if r.closer != nil {
 		return r.closer.Close()
