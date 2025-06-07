@@ -1,8 +1,6 @@
 package relational
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +8,6 @@ import (
 
 	"github.com/whacked/yamdb/pkg/codec"
 	jio "github.com/whacked/yamdb/pkg/io/jsonl"
-	"github.com/whacked/yamdb/pkg/types"
 )
 
 func TestTableDeriver(t *testing.T) {
@@ -107,30 +104,6 @@ func TestTableDeriver(t *testing.T) {
 			t.Errorf("Command field %s should not be included in field info", field)
 		}
 	}
-}
-
-func loadJSONL(t *testing.T, path string) []types.Record {
-	t.Helper()
-
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open %s: %v", path, err)
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	var recs []types.Record
-	for sc.Scan() {
-		var r types.Record
-		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			t.Fatalf("unmarshal line %q: %v", sc.Text(), err)
-		}
-		recs = append(recs, r)
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatalf("scan %s: %v", path, err)
-	}
-	return recs
 }
 
 // unit test ───────────────────────────────────────────────────────────────────
