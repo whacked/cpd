@@ -320,66 +320,47 @@ func ProcessorToCompactedJSONL(processor *JSONLProcessor) string {
 
 // ProcessorToExpandedJSONL converts a processor's records to expanded JSONL format
 func ProcessorToExpandedJSONL(processor *JSONLProcessor) string {
-	var lines []string
-
-	for _, record := range processor.RecordHistory {
-		// Skip special records
-		if _, hasSchema := record.Get("_schema"); hasSchema {
-			continue
-		}
-		if _, hasMeta := record.Get("_meta"); hasMeta {
-			continue
-		}
-
-		// Create expanded record with column names
-		expandedRecord := make(map[string]interface{})
-		for _, col := range processor.OrderedColumns {
-			if value, ok := record.Get(col.Name); ok {
-				expandedRecord[col.Name] = value
-			}
-		}
-
-		// Marshal preserving key order
-		jsonBytes, _ := json.Marshal(expandedRecord)
-		lines = append(lines, string(jsonBytes))
-	}
-	return strings.Join(lines, "\n")
+	return processor.ToExpandedJSONL(true)
 }
 
 func TestJSONLToYAMLConversion(t *testing.T) {
 	tests := []struct {
 		name                string
-		jsonlFile           string
+		jsonlInputFile      string
 		yamlFile            string
+		outputReferenceFile string
 		serializerFn        func(*JSONLProcessor) string
 		yamlLineProcessorFn func(string) string
 	}{
-		/*
-			{
-				name:                "basic conversion",
-				jsonlFile:           "basic.jsonl",
-				yamlFile:            "basic.yaml",
-				serializerFn:        ProcessorToRawJSONL,
-				yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
-			},
-			// */
+		// /*
+		{
+			name:                "basic conversion",
+			jsonlInputFile:      "basic.jsonl",
+			yamlFile:            "basic.yaml",
+			outputReferenceFile: "",
+			serializerFn:        ProcessorToRawJSONL,
+			yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
+		},
+		// */
 
-		/*
-			{
-				// comment order is wrong!
-				name:                "compacted conversion",
-				jsonlFile:           "compacted.jsonl",
-				yamlFile:            "compacted.yaml",
-				serializerFn:        ProcessorToCompactedJSONL,
-				yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlArray,
-			},
-			// */
+		// /*
+		{
+			// comment order is wrong!
+			name:                "compacted conversion",
+			jsonlInputFile:      "compacted.jsonl",
+			yamlFile:            "compacted.yaml",
+			outputReferenceFile: "",
+			serializerFn:        ProcessorToCompactedJSONL,
+			yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlArray,
+		},
+		// */
 
 		// /*
 		{
 			name:                "meta version conversion",
-			jsonlFile:           "meta_version.jsonl",
+			jsonlInputFile:      "meta_version.jsonl",
 			yamlFile:            "meta_version.yaml",
+			outputReferenceFile: "meta_version.expanded.jsonl",
 			serializerFn:        ProcessorToExpandedJSONL,
 			yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
 		},
@@ -389,7 +370,7 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Read test files
-			jsonlInput := readTestFile(t, tt.jsonlFile)
+			jsonlInput := readTestFile(t, tt.jsonlInputFile)
 
 			// Create JSONL reader
 			reader := jsonl.NewReader(io.NopCloser(strings.NewReader(jsonlInput)))
@@ -409,18 +390,23 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 
 			// Convert to YAML using the specified serializer
 			receivedJsonl := tt.serializerFn(processor)
+			var expectedJsonl string
 
-			// Get data lines from YAML input and convert to JSONL format
-			dataLines, err := GetDataLines(filepath.Join("testdata", tt.yamlFile))
-			assert.NoError(t, err)
+			if tt.outputReferenceFile != "" {
+				expectedJsonl = readTestFile(t, tt.outputReferenceFile)
+			} else {
+				var expectedJsonlLines []string
+				// Get data lines from YAML input and convert to JSONL format
+				dataLines, err := GetDataLines(filepath.Join("testdata", tt.yamlFile))
+				assert.NoError(t, err)
 
-			var expectedJsonlLines []string
-			for _, line := range dataLines {
-				fmt.Println("line: ", line)
-				jsonlLine := tt.yamlLineProcessorFn(line)
-				expectedJsonlLines = append(expectedJsonlLines, jsonlLine)
+				for _, line := range dataLines {
+					fmt.Println("line: ", line)
+					jsonlLine := tt.yamlLineProcessorFn(line)
+					expectedJsonlLines = append(expectedJsonlLines, jsonlLine)
+				}
+				expectedJsonl = strings.Join(expectedJsonlLines, "\n")
 			}
-			expectedJsonl := strings.Join(expectedJsonlLines, "\n")
 
 			fmt.Println("================================================")
 			fmt.Println("receivedJsonl")
@@ -430,7 +416,7 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 			fmt.Println(expectedJsonl)
 			fmt.Println(". . . . . . . . . . . . . . . .")
 
-			assert.Equal(t, receivedJsonl, expectedJsonl)
+			assert.Equal(t, strings.TrimSpace(expectedJsonl), strings.TrimSpace(receivedJsonl))
 		})
 	}
 }
@@ -515,4 +501,4 @@ func TestYAMLToJSONLConversion(t *testing.T) {
 		})
 	}
 }
-*/
+// */

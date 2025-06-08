@@ -1,5 +1,5 @@
 {"_version": 1, "_meta": {"source": "sensor.alpha", "segment": 1}}
-{"_schema": {"type": "object", "properties": {"name": {"type": "string"}, "temperature": {"type": "number"}, "status": {"type": "string"}}}, "note": "initial schema"}
+{"_schema": {"type": "object", "description": "initial schema", "properties": {"name": {"type": "string"}, "temperature": {"type": "number"}, "status": {"type": "string"}}}}
 {"name": "alpha-1", "temperature": 22.5, "status": "ok"}
 {"name": "alpha-2", "temperature": 23.0, "status": "ok"}
 {"name": "alpha-3", "temperature": 24.8, "status": "warn"}
@@ -20,7 +20,7 @@
 {"name": "gamma-2", "status": "ok", "location": "labX"}
 
 {"_schema": {"type": "object", "properties": {"timestamp": {"type": "string"}, "event": {"type": "string"}, "value": {"type": "number"}}}, "_meta": {"source": "event.stream", "segment": 4}}
-{"timestamp": "2024-10-01T10:00:00Z", "event": "boot", "value": 1.0}
+{"event": "boot", "timestamp": "2024-10-01T10:00:00Z", "value": 1.0}
 {"timestamp": "2024-10-01T10:05:00Z", "event": "tick", "value": 1.1}
 {"timestamp": "2024-10-01T10:10:00Z", "event": "tick", "value": 1.2}
 {"timestamp": "2024-10-01T10:15:00Z", "event": "shutdown", "value": 0.0}

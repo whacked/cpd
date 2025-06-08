@@ -170,14 +170,20 @@ func (w *Writer) writeKeyValue(key string, value interface{}, indent int) error 
 	return nil
 }
 
-// writeDataItem writes a single data item in JSONL format
 func (w *Writer) writeDataItem(item interface{}) error {
-	switch v := item.(type) {
-	case *orderedmapjson.AnyOrderedMap:
-		// Build JSON manually to preserve order and control formatting
-		var buf strings.Builder
-		buf.WriteString("{")
+	var buf strings.Builder
+	if err := w.formatValue(&buf, item); err != nil {
+		return err
+	}
+	fmt.Fprintf(w.w, "%s", buf.String())
+	return nil
+}
 
+// formatValue recursively formats a value into buf
+func (w *Writer) formatValue(buf *strings.Builder, val interface{}) error {
+	switch v := val.(type) {
+	case *orderedmapjson.AnyOrderedMap:
+		buf.WriteString("{")
 		first := true
 		for el := v.Front(); el != nil; el = el.Next() {
 			if !first {
@@ -185,125 +191,63 @@ func (w *Writer) writeDataItem(item interface{}) error {
 			}
 			first = false
 
-			// Write key
-			if w.options.QuoteStrings || strings.Contains(el.Key, " ") {
-				buf.WriteString(fmt.Sprintf("%q", el.Key))
-			} else {
-				buf.WriteString(el.Key)
-			}
+			// Key
+			buf.WriteString(w.formatKey(el.Key))
 			buf.WriteString(": ")
 
-			// Write value
-			switch val := el.Value.(type) {
-			case string:
-				if w.options.QuoteStrings || strings.Contains(val, " ") {
-					buf.WriteString(fmt.Sprintf("%q", val))
-				} else {
-					buf.WriteString(val)
-				}
-			case float64:
-				buf.WriteString(fmt.Sprintf("%g", val))
-			case []interface{}:
-				buf.WriteString("[")
-				for i, item := range val {
-					if i > 0 {
-						buf.WriteString(", ")
-					}
-					if str, ok := item.(string); ok {
-						if w.options.QuoteStrings {
-							buf.WriteString(fmt.Sprintf("%q", str))
-						} else {
-							buf.WriteString(str)
-						}
-					} else {
-						buf.WriteString(fmt.Sprintf("%v", item))
-					}
-				}
-				buf.WriteString("]")
-			case *orderedmapjson.AnyOrderedMap:
-				// Recursively handle nested maps
-				buf.WriteString("{")
-				first := true
-				for el := val.Front(); el != nil; el = el.Next() {
-					if !first {
-						buf.WriteString(", ")
-					}
-					first = false
-
-					if w.options.QuoteStrings || strings.Contains(el.Key, " ") {
-						buf.WriteString(fmt.Sprintf("%q", el.Key))
-					} else {
-						buf.WriteString(el.Key)
-					}
-					buf.WriteString(": ")
-
-					switch val := el.Value.(type) {
-					case string:
-						if w.options.QuoteStrings || strings.Contains(val, " ") {
-							buf.WriteString(fmt.Sprintf("%q", val))
-						} else {
-							buf.WriteString(val)
-						}
-					case []interface{}:
-						buf.WriteString("[")
-						for i, item := range val {
-							if i > 0 {
-								buf.WriteString(", ")
-							}
-							if str, ok := item.(string); ok {
-								if w.options.QuoteStrings || strings.Contains(str, " ") {
-									buf.WriteString(fmt.Sprintf("%q", str))
-								} else {
-									buf.WriteString(str)
-								}
-							} else {
-								buf.WriteString(fmt.Sprintf("%v", item))
-							}
-						}
-						buf.WriteString("]")
-					case *orderedmapjson.AnyOrderedMap:
-						// Recursively handle deeper nested maps
-						if err := w.writeDataItem(val); err != nil {
-							return err
-						}
-					case []string:
-						buf.WriteString("[")
-						for i, item := range val {
-							if i > 0 {
-								buf.WriteString(", ")
-							}
-							if w.options.QuoteStrings || strings.Contains(item, " ") {
-								buf.WriteString(fmt.Sprintf("%q", item))
-							} else {
-								buf.WriteString(item)
-							}
-						}
-						buf.WriteString("]")
-					default:
-						buf.WriteString(fmt.Sprintf("%v", val))
-					}
-				}
-				buf.WriteString("}")
-			default:
-				buf.WriteString(fmt.Sprintf("%v", val))
+			// Value (recursive)
+			if err := w.formatValue(buf, el.Value); err != nil {
+				return err
 			}
 		}
 		buf.WriteString("}")
 
-		fmt.Fprintf(w.w, "%s", buf.String())
+	case []interface{}:
+		buf.WriteString("[")
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := w.formatValue(buf, item); err != nil {
+				return err
+			}
+		}
+		buf.WriteString("]")
+
+	case []string:
+		buf.WriteString("[")
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(w.formatScalar(item))
+		}
+		buf.WriteString("]")
 
 	case string:
-		if w.options.QuoteStrings || strings.Contains(v, " ") {
-			fmt.Fprintf(w.w, "%q", v)
-		} else {
-			fmt.Fprintf(w.w, "%s", v)
-		}
+		buf.WriteString(w.formatScalar(v))
+	case float64:
+		buf.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
+	case int:
+		buf.WriteString(strconv.Itoa(v))
 	default:
-		if w.options.QuoteStrings || strings.Contains(fmt.Sprintf("%v", v), " ") {
-			fmt.Fprintf(w.w, "%q", v)
-		} else {
-			fmt.Fprintf(w.w, "%v", v)
-		}
+		buf.WriteString(fmt.Sprintf("%v", v))
 	}
 	return nil
+}
+
+// formatKey handles quoting for map keys
+func (w *Writer) formatKey(s string) string {
+	if w.options.QuoteStrings || needsQuoting(s) {
+		return strconv.Quote(s)
+	}
+	return s
+}
+
+// formatScalar handles quoting for scalar values
+func (w *Writer) formatScalar(s string) string {
+	if w.options.QuoteStrings || needsQuoting(s) {
+		return strconv.Quote(s)
+	}
+	return s
 }

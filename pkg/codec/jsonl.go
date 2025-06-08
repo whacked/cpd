@@ -12,13 +12,29 @@ import (
 	"github.com/whacked/yamdb/pkg/types"
 )
 
-// ProcessedRecord represents the result of processing a JSONL record
-type ProcessedRecord struct {
-	Version *int
-	Schema  interface{} // Raw JSON Schema object
-	Meta    *orderedmapjson.AnyOrderedMap
-	// Data    *types.Record // if it's a data row
-	Data *orderedmapjson.AnyOrderedMap
+// RecursiveMerge merges newMap into oldMap, recursively handling nested maps
+func RecursiveMergeOrderedMaps(oldMap *orderedmapjson.AnyOrderedMap, newMap *orderedmapjson.AnyOrderedMap) {
+	for el := newMap.Front(); el != nil; el = el.Next() {
+		// Check if key exists in old map
+		oldVal, exists := oldMap.Get(el.Key)
+		if !exists {
+			// Key doesn't exist, simply add it
+			oldMap.Set(el.Key, el.Value)
+			continue
+		}
+
+		// Key exists, check if both are maps
+		oldSubMap, oldIsMap := oldVal.(*orderedmapjson.AnyOrderedMap)
+		newSubMap, newIsMap := el.Value.(*orderedmapjson.AnyOrderedMap)
+
+		if oldIsMap && newIsMap {
+			// Both are maps, recursively merge
+			RecursiveMergeOrderedMaps(oldSubMap, newSubMap)
+		} else {
+			// Different types or not both maps, overwrite with new value
+			oldMap.Set(el.Key, el.Value)
+		}
+	}
 }
 
 // RecordToJSONL converts a RecordWithMetadata to a JSONL string, only including the record data
@@ -227,65 +243,6 @@ func mapJSONSchemaTypeToColumnType(schemaType interface{}) types.ColumnType {
 	return types.TypeString
 }
 
-// ProcessJSONLRecord interprets one line of JSONL as a Record.
-// It detects and extracts reserved keywords (_version, _schema, _meta),
-// and returns a structured result. Everything else is passed through as data.
-func ProcessJSONLRecord(r *orderedmapjson.AnyOrderedMap) (*JSONLProcessResult, error) {
-	result := &JSONLProcessResult{}
-
-	// Check for version
-	if v, ok := r.Get("_version"); ok {
-		internal.DebugLog("Detected _version field: %v", v)
-		versionNum, ok := v.(float64) // JSON numbers decode as float64
-		if !ok {
-			return nil, fmt.Errorf("_version must be a number")
-		}
-		internal.DebugLog("Parsed version number: %d", int(versionNum))
-		result.Version = intPtr(int(versionNum))
-	}
-
-	// Check for schema
-	if schemaRaw, ok := r.Get("_schema"); ok {
-		internal.DebugLog("Detected _schema field: %v", schemaRaw)
-		schemaMap, ok := schemaRaw.(*orderedmapjson.AnyOrderedMap)
-		if !ok {
-			return nil, fmt.Errorf("_schema must be an object")
-		}
-		cols, err := ParseSchemaObject(schemaMap)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing schema: %w", err)
-		}
-		result.Schema = cols
-	}
-
-	// Check for meta
-	if metaRaw, ok := r.Get("_meta"); ok {
-		internal.DebugLog("Detected _meta field: %v", metaRaw)
-		if meta, ok := metaRaw.(*orderedmapjson.AnyOrderedMap); ok {
-			result.Meta = meta
-		} else {
-			return nil, fmt.Errorf("_meta must be an object")
-		}
-	}
-
-	// Create a new map without special fields for data
-	data := orderedmapjson.NewAnyOrderedMap()
-	hasData := false
-	for el := r.Front(); el != nil; el = el.Next() {
-		if el.Key != "_version" && el.Key != "_schema" && el.Key != "_meta" {
-			data.Set(el.Key, el.Value)
-			hasData = true
-		}
-	}
-	if hasData {
-		result.Data = data
-	} else {
-		result.Data = nil
-	}
-
-	return result, nil
-}
-
 // CategoryProcessor defines how to handle a special category
 type CategoryProcessor interface {
 	// Process handles the special category logic
@@ -392,8 +349,6 @@ func (p *MergeCategoryProcessor) Category() string {
 }
 
 func (p *MergeCategoryProcessor) Process(record *orderedmapjson.AnyOrderedMap) error {
-	fmt.Printf("Processing @merge category...\n")
-
 	prevRecord, err := p.processor.GetRecordAt(-1)
 	if err != nil {
 		return err
@@ -403,17 +358,19 @@ func (p *MergeCategoryProcessor) Process(record *orderedmapjson.AnyOrderedMap) e
 	}
 	fmt.Printf("Previous record: %+v\n", prevRecord)
 
-	merged := orderedmapjson.NewAnyOrderedMap()
+	record.Delete("category")
 
-	for el := prevRecord.Front(); el != nil; el = el.Next() {
-		merged.Set(el.Key, el.Value)
+	RecursiveMergeOrderedMaps(prevRecord, record)
+
+	// empty the record
+	remainingKeys := make([]string, 0)
+	for key := range record.Keys() {
+		remainingKeys = append(remainingKeys, key)
+	}
+	for _, key := range remainingKeys {
+		record.Delete(key)
 	}
 
-	for el := record.Front(); el != nil; el = el.Next() {
-		merged.Set(el.Key, el.Value)
-	}
-
-	*record = *merged
 	return nil
 }
 
@@ -452,7 +409,7 @@ func (p *JSONLProcessor) updateOrderedColumns(record *orderedmapjson.AnyOrderedM
 }
 
 // ProcessRecord processes a single JSONL record
-func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*ProcessedRecord, error) {
+func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*orderedmapjson.AnyOrderedMap, error) {
 
 	// Process any category-specific logic
 	if err := p.processCategories(record); err != nil {
@@ -460,42 +417,133 @@ func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*P
 		return nil, err
 	}
 
+	// if category processing consumed the record
+	if record.Len() == 0 {
+		return nil, nil
+	}
+
+	// FIXME: this may now be redundant
 	p.updateOrderedColumns(record)
 
-	// Process the record
-	result, err := ProcessJSONLRecord(record)
+	p.RecordHistory = append(p.RecordHistory, record)
+	p.CurrentIndex = len(p.RecordHistory) - 1
 
-	if err != nil {
-		fmt.Printf("ERROR processing record: %v\n", err)
-		return nil, err
-	}
-
-	// Add to history if it's a data record
-	if result.Data != nil {
-		p.RecordHistory = append(p.RecordHistory, result.Data)
-		p.CurrentIndex = len(p.RecordHistory) - 1
-	} else {
-		fmt.Printf("\nSkipping history - not a data record:")
-		fmt.Printf("\n                                    : %+v\n", result)
-	}
-
-	return &ProcessedRecord{
-		Version: result.Version,
-		Schema:  result.Schema,
-		Meta:    result.Meta,
-		Data:    result.Data,
-	}, nil
+	return record, nil
 }
 
-// ProcessRecords processes multiple JSONL records
-func (p *JSONLProcessor) ProcessRecords(records []*orderedmapjson.AnyOrderedMap) ([]*ProcessedRecord, error) {
-	var results []*ProcessedRecord
-	for _, record := range records {
-		result, err := p.ProcessRecord(record)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, result)
+const defaultDelimiter = "."
+
+func ExpandMetaDataFields(dataMap *orderedmapjson.AnyOrderedMap, delimiter string) *orderedmapjson.AnyOrderedMap {
+	if delimiter == "" {
+		delimiter = defaultDelimiter
 	}
-	return results, nil
+
+	result := orderedmapjson.NewAnyOrderedMap()
+	flattenMapRecursive("_meta", dataMap, delimiter, result)
+	return result
+}
+
+func flattenMapRecursive(prefix string, m *orderedmapjson.AnyOrderedMap, delimiter string, out *orderedmapjson.AnyOrderedMap) {
+	for el := m.Front(); el != nil; el = el.Next() {
+		key := el.Key
+		val := el.Value
+
+		fullKey := key
+		if prefix != "" {
+			fullKey = prefix + delimiter + key
+		}
+
+		switch v := val.(type) {
+		case *orderedmapjson.AnyOrderedMap:
+			flattenMapRecursive(fullKey, v, delimiter, out)
+		default:
+			// Preserve primitives and arrays as-is
+			out.Set(fullKey, val)
+		}
+	}
+}
+
+func (p *JSONLProcessor) ToExpandedJSONL(expandAndCarrySpecialFields bool) string {
+
+	var currentVersion int = 0
+	currentSchemas := *orderedmapjson.NewAnyOrderedMap()
+	currentMeta := *orderedmapjson.NewAnyOrderedMap()
+	jsonl := strings.Builder{}
+
+	for _, record := range p.RecordHistory {
+
+		if record == nil {
+			continue
+		}
+
+		dataRecord := record.Copy()
+		outputRecord := orderedmapjson.NewAnyOrderedMap()
+
+		// handle special records
+		if recordVersion, ok := dataRecord.Get("_version"); ok {
+			currentVersion = int(recordVersion.(float64))
+			dataRecord.Delete("_version")
+		}
+		if recordSchema, ok := dataRecord.Get("_schema"); ok {
+			RecursiveMergeOrderedMaps(&currentSchemas, recordSchema.(*orderedmapjson.AnyOrderedMap))
+			dataRecord.Delete("_schema")
+		}
+		if recordMeta, ok := dataRecord.Get("_meta"); ok {
+			RecursiveMergeOrderedMaps(&currentMeta, recordMeta.(*orderedmapjson.AnyOrderedMap))
+			dataRecord.Delete("_meta")
+		}
+
+		if dataRecord.Len() == 0 {
+			continue
+		}
+
+		if expandAndCarrySpecialFields {
+			// Add version if set
+			if currentVersion > 0 {
+				outputRecord.Set("_version", currentVersion)
+			}
+
+			if currentMeta.Len() > 0 {
+				expandedMeta := ExpandMetaDataFields(&currentMeta, ".")
+				for key := range expandedMeta.Keys() {
+					val, _ := expandedMeta.Get(key)
+					outputRecord.Set(key, val)
+				}
+			}
+		}
+
+		// add the data record to the output record
+		for key := range dataRecord.Keys() {
+			val, _ := dataRecord.Get(key)
+			outputRecord.Set(key, val)
+		}
+
+		// Manually build JSONL output preserving key order
+		jsonl.WriteString("{")
+		keyIndex := 0
+		for key := range outputRecord.Keys() {
+			if keyIndex > 0 {
+				jsonl.WriteString(",")
+			}
+			keyIndex++
+			// Marshal the key
+			jsonKey, _ := json.Marshal(key)
+			jsonl.Write(jsonKey)
+			jsonl.WriteString(":")
+
+			val, _ := outputRecord.Get(key)
+			// Marshal the value (using built-in marshaller for nested structures)
+			var valBytes []byte
+			if f, ok := val.(float64); ok && float64(int64(f)) == f {
+				// If it's a float that looks like an integer (e.g. 25.0), force decimal point
+				valBytes = []byte(fmt.Sprintf("%.1f", f))
+			} else {
+				valBytes, _ = json.Marshal(val)
+			}
+			jsonl.Write(valBytes)
+		}
+		jsonl.WriteString("}\n")
+	}
+
+	return jsonl.String()
 }

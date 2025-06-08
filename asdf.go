@@ -471,8 +471,6 @@ func runYamlDemo() {
 }
 
 func runJsonlDemo(filepath string, verbosity int) {
-	expandAndCarrySpecialFields := true // Set to false to disable state expansion
-
 	// Open the JSONL file
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -518,63 +516,7 @@ func runJsonlDemo(filepath string, verbosity int) {
 			fmt.Printf("%s:\n%s\n", sectionHeader("Raw JSON"), jsonOutput(string(jsonBytes)))
 		}
 
-		result, err := processor.ProcessRecord(record)
-		if err != nil {
-			log.Printf(warnMsg("Warning: Failed to process record at index %d: %v"), i, err)
-			continue
-		}
-
-		if verbosity > 0 {
-			// Print the result with current state
-			fmt.Printf("\n%s:\n", sectionHeader("Processed Result"))
-			fmt.Printf("%s\n", strings.Repeat("-", 80))
-		}
-
-		if result.Version != nil && verbosity > 0 {
-			fmt.Printf("%s: %d\n", sectionHeader("Version Update"), *result.Version)
-			fmt.Printf("%s: %d\n", sectionHeader("Current Version"), processor.Version)
-		}
-
-		if result.Schema != nil {
-			schemaBytes, _ := json.MarshalIndent(result.Schema, "  ", "  ")
-			currentSchemaBytes, _ := json.MarshalIndent(processor.Schema, "  ", "  ")
-
-			if verbosity > 0 {
-				fmt.Printf("\n%s:\n", sectionHeader("Schema Update"))
-				fmt.Printf("%s\n", jsonOutput(string(schemaBytes)))
-				fmt.Printf("\n%s:\n", sectionHeader("Current Schema"))
-				fmt.Printf("%s\n", jsonOutput(string(currentSchemaBytes)))
-			}
-		}
-
-		if result.Meta != nil {
-			metaBytes, _ := json.MarshalIndent(result.Meta, "  ", "  ")
-			currentMetaBytes, _ := json.MarshalIndent(processor.Meta, "  ", "  ")
-
-			if verbosity > 0 {
-				fmt.Printf("\n%s:\n", sectionHeader("Meta Update"))
-				fmt.Printf("%s\n", jsonOutput(string(metaBytes)))
-				fmt.Printf("\n%s:\n", sectionHeader("Current Meta"))
-				fmt.Printf("%s\n", jsonOutput(string(currentMetaBytes)))
-			}
-		}
-
-		if result.Data != nil {
-			dataBytes, _ := json.MarshalIndent(*result.Data, "  ", "  ")
-
-			if verbosity > 0 {
-				fmt.Printf("\n%s:\n", sectionHeader("Data Record"))
-				fmt.Printf("%s\n", jsonOutput(string(dataBytes)))
-				fmt.Printf("\n%s:\n", sectionHeader("Applied State"))
-				fmt.Printf("  %s: %d\n", sectionHeader("Version"), *result.Version)
-				if result.Schema != nil {
-					fmt.Printf("  %s: present\n", sectionHeader("Schema"))
-				}
-				if result.Meta != nil {
-					fmt.Printf("  %s: %d fields\n", sectionHeader("Meta"), result.Meta.Len())
-				}
-			}
-		}
+		processor.ProcessRecord(record)
 		i++
 	}
 
@@ -584,86 +526,8 @@ func runJsonlDemo(filepath string, verbosity int) {
 		fmt.Printf("%s:\n", sectionHeader("Final Processed History (JSONL)"))
 		fmt.Printf("%s\n", strings.Repeat("-", 80))
 	}
-	for _, record := range processor.RecordHistory {
-		// Skip special records
-		if _, hasSchema := record.Get("_schema"); hasSchema {
-			continue
-		}
-		if _, hasMeta := record.Get("_meta"); hasMeta {
-			continue
-		}
 
-		// Create ordered output record
-		outputRecord := make(map[string]interface{})
-		var orderedKeys []string
-
-		if expandAndCarrySpecialFields {
-			// Add version if set
-			if processor.Version > 0 {
-				outputRecord["_version"] = processor.Version
-				orderedKeys = append(orderedKeys, "_version")
-			}
-
-			// Add meta if present
-			if len(processor.Meta) > 0 {
-				outputRecord["_meta"] = processor.Meta
-				orderedKeys = append(orderedKeys, "_meta")
-			}
-		}
-
-		// Get schema properties if available
-		if schema, ok := processor.Schema.(map[string]interface{}); ok {
-			if props, ok := schema["properties"].(map[string]interface{}); ok {
-				// First add fields in schema order
-				for field := range props {
-					if value, exists := record.Get(field); exists {
-						outputRecord[field] = value
-						orderedKeys = append(orderedKeys, field)
-					}
-				}
-			}
-		}
-
-		// Then add any fields not in schema
-		for el := record.Front(); el != nil; el = el.Next() {
-			field := el.Key
-			if !strings.HasPrefix(field, "_") {
-				// Check if field exists in schema properties
-				if schema, ok := processor.Schema.(map[string]interface{}); ok {
-					if props, ok := schema["properties"].(map[string]interface{}); ok {
-						if _, exists := props[field]; !exists {
-							outputRecord[field] = el.Value
-							orderedKeys = append(orderedKeys, field)
-						}
-					} else {
-						outputRecord[field] = el.Value
-						orderedKeys = append(orderedKeys, field)
-					}
-				} else {
-					outputRecord[field] = el.Value
-					orderedKeys = append(orderedKeys, field)
-				}
-			}
-		}
-
-		// Manually build JSONL output preserving key order
-		var jsonl strings.Builder
-		jsonl.WriteString("{")
-		for i, key := range orderedKeys {
-			if i > 0 {
-				jsonl.WriteString(",")
-			}
-			// Marshal the key
-			keyBytes, _ := json.Marshal(key)
-			jsonl.Write(keyBytes)
-			jsonl.WriteString(":")
-			// Marshal the value (using built-in marshaller for nested structures)
-			valBytes, _ := json.Marshal(outputRecord[key])
-			jsonl.Write(valBytes)
-		}
-		jsonl.WriteString("}")
-		fmt.Println(jsonOutput(jsonl.String()))
-	}
+	fmt.Println(processor.ToExpandedJSONL(true))
 }
 
 func runJsonToYamlDemo(filepath string) {
@@ -799,13 +663,13 @@ func runJsonToYamlDemo(filepath string) {
 	fmt.Println(yamlBuilder.String())
 }
 
-func main2() {
+func main() {
 	if false {
 
 		runYamlDemo()
 		os.Exit(0)
 
-	} else {
+	} else if false {
 		fmt.Println("hello")
 
 		source, err := os.ReadFile("tests/example-1.yaml")
@@ -838,7 +702,7 @@ func main2() {
 		}
 	}
 
-	if false {
+	if true {
 		runJsonlDemo(filepath, 0)
 	} else {
 		runJsonToYamlDemo(filepath)

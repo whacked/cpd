@@ -47,7 +47,7 @@ func TestJSONLIngestion(t *testing.T) {
 			processor := NewJSONLProcessor()
 			record, err := processor.ProcessRecord(tt.expected)
 			assert.NoError(t, err)
-			assert.Equal(t, tt.expected, record.Data)
+			assert.Equal(t, tt.expected, record)
 		})
 	}
 }

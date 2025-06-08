@@ -3,6 +3,7 @@ package yaml
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/GitRowin/orderedmapjson"
@@ -90,8 +91,31 @@ func convertNodeToOrderedMap(node *yaml.Node, result *orderedmapjson.AnyOrderedM
 			// Convert value based on its type
 			switch valueNode.Kind {
 			case yaml.ScalarNode:
-				// Handle scalar values
-				result.Set(key, valueNode.Value)
+				// Handle scalar values based on tag type
+				switch valueNode.Tag {
+				case "!!int":
+					if val, err := strconv.Atoi(valueNode.Value); err == nil {
+						result.Set(key, val)
+					} else {
+						result.Set(key, valueNode.Value)
+					}
+				case "!!float":
+					if val, err := strconv.ParseFloat(valueNode.Value, 64); err == nil {
+						result.Set(key, val)
+					} else {
+						result.Set(key, valueNode.Value)
+					}
+				case "!!bool":
+					if val, err := strconv.ParseBool(valueNode.Value); err == nil {
+						result.Set(key, val)
+					} else {
+						result.Set(key, valueNode.Value)
+					}
+				case "!!null":
+					result.Set(key, nil)
+				default:
+					result.Set(key, valueNode.Value)
+				}
 
 			case yaml.MappingNode:
 				// Handle nested maps
@@ -136,7 +160,7 @@ func convertNodeToOrderedMap(node *yaml.Node, result *orderedmapjson.AnyOrderedM
 
 // String returns the YAML document as a string
 func (d *Document) String() string {
-	if d.Data == nil {
+	if d.Data == nil 
 		return ""
 	}
 
