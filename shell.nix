@@ -14,7 +14,7 @@
 }:
 
 let
-  goEnv = mkGoEnv { pwd = ./.; };
+  goEnv = mkGoEnv { pwd = ./.; go = pkgs.go_1_23; };
   go-jsonschema = pkgs.stdenv.mkDerivation {
     name = "go-jsonschema";
     src = pkgs.fetchurl {
