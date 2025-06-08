@@ -1,0 +1,53 @@
+# 🧪 TEST: meta_version.yaml
+#
+# Aims:
+# - Validate metadata and version propagation with context switching
+# - Verify segmented YAML documents preserve per-record context (_version, _meta)
+#
+# Expectations:
+# - Top-level _meta and _version are declared only when context changes
+# - Records inherit and carry forward metadata unless overridden
+# - Output must split into multiple YAML documents using `---` when context changes
+# - Expanded JSONL must show flattened metadata using dot notation (e.g. _meta.location)
+# - Context merges must be deterministic, and nested keys (e.g. device.id) are flattened
+
+#
+# _meta propagation	beta-2, beta-3 carry forward lab2
+# _meta override + extend	beta-4 introduces flavor
+# Nested _meta	beta-5 adds device.id
+# Unset metadata	beta-6 nulls out location
+# _version update midstream	beta-7 switches to version 2
+
+---  # Initial context
+_version: 1
+_meta:
+  location: lab1
+  device: sensor23
+_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name: {type: string}
+        temperature: {type: number}
+        status: {type: string}
+      required: [name, temperature, status]
+_columns:
+  - name
+  - temperature
+  - status
+data:
+  - {name: beta-1, temperature: 28.4, status: warn}
+  - {name: beta-2, temperature: 29.1, status: ok}
+  - {status: ok, name: beta-3, temperature: 27.1}
+  - {temperature: 30.7, status: ok, name: beta-4}
+  - {name: beta-5, temperature: 31.2, status: fail}
+  - {name: beta-6, temperature: 25.0, status: warn}
+---
+_version: 2
+_meta:
+  location: labX
+data:
+  - {name: "beta 7", temperature: 32.5, status: ok}
+

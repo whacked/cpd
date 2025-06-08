@@ -63,24 +63,23 @@ func GetCategoryString(category FieldCategory) string {
 
 // FieldInfo holds metadata about a field
 type FieldInfo struct {
-	Name           string
-	Category       FieldCategory
-	IsArray        bool
-	ElementType    string
-	TotalRecords   int
-	TotalElements  int
-	UniqueValues   int
-	ValueFrequency map[string]int
-	Score          float64
+	Name          string
+	Category      FieldCategory
+	IsArray       bool
+	ElementType   string
+	TotalRecords  int
+	TotalElements int
+	UniqueValues  int
+	Score         float64
 }
 
 // ValueStats tracks statistics about field values
 type ValueStats struct {
-	TotalOccurrences int            // Total non-nil occurrences
-	TotalElements    int            // For arrays: total number of elements across all records
-	Values           map[string]int // Frequency of each value
-	IsArray          bool           // Whether this is an array field
-	ElementType      string         // For arrays: type of elements
+	TotalOccurrences int                           // Total non-nil occurrences
+	TotalElements    int                           // For arrays: total number of elements across all records
+	Values           *orderedmapjson.AnyOrderedMap // Frequency of each value
+	IsArray          bool                          // Whether this is an array field
+	ElementType      string                        // For arrays: type of elements
 }
 
 // TableDeriver analyzes JSONL records to derive relational table structures
@@ -111,7 +110,7 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 			// Initialize stats for this field if not exists
 			if _, exists := d.FieldStats[field]; !exists {
 				d.FieldStats[field] = &ValueStats{
-					Values: make(map[string]int),
+					Values: orderedmapjson.NewAnyOrderedMap(),
 				}
 			}
 			stats := d.FieldStats[field]
@@ -123,7 +122,7 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 				stats.TotalElements += len(arr)
 
 				// Only process if we haven't exceeded the limit
-				if len(stats.Values) < MaxUniqueValues {
+				if stats.Values.Len() < MaxUniqueValues {
 					// Determine element type from first non-nil value
 					if stats.ElementType == "" && len(arr) > 0 {
 						for _, v := range arr {
@@ -146,7 +145,8 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 					// Track values
 					for _, v := range arr {
 						if str, ok := v.(string); ok {
-							stats.Values[str]++
+							currentLength, _ := stats.Values.Get(str)
+							stats.Values.Set(str, currentLength.(int)+1)
 						}
 					}
 				}
@@ -154,8 +154,13 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 				// Handle string fields
 				stats.TotalOccurrences++
 				stats.TotalElements++ // For string fields, this is the same as occurrences
-				if len(stats.Values) < MaxUniqueValues {
-					stats.Values[str]++
+				if stats.Values.Len() < MaxUniqueValues {
+					maybeCurrentLength, _ := stats.Values.Get(str)
+					currentLength := 0
+					if maybeCurrentLength != nil {
+						currentLength = maybeCurrentLength.(int)
+					}
+					stats.Values.Set(str, currentLength+1)
 				}
 			}
 		}
@@ -171,8 +176,9 @@ func (stats *ValueStats) calculateEntropy() float64 {
 	}
 
 	var entropy float64
-	for _, count := range stats.Values {
-		p := float64(count) / float64(stats.TotalOccurrences)
+	for key := range stats.Values.Keys() {
+		count, _ := stats.Values.Get(key)
+		p := float64(count.(int)) / float64(stats.TotalOccurrences)
 		entropy -= p * math.Log2(p)
 	}
 	return entropy
@@ -185,8 +191,8 @@ func (stats *ValueStats) calculateGini() float64 {
 	}
 
 	var sumSquares float64
-	for _, count := range stats.Values {
-		p := float64(count) / float64(stats.TotalOccurrences)
+	for count := range stats.Values.Values() {
+		p := float64(count.(int)) / float64(stats.TotalOccurrences)
 		sumSquares += p * p
 	}
 	return 1 - sumSquares
@@ -199,9 +205,9 @@ func (stats *ValueStats) calculateMaxFrequency() float64 {
 	}
 
 	var maxCount int
-	for _, count := range stats.Values {
-		if count > maxCount {
-			maxCount = count
+	for count := range stats.Values.Values() {
+		if count.(int) > maxCount {
+			maxCount = count.(int)
 		}
 	}
 	return float64(maxCount) / float64(stats.TotalOccurrences)
@@ -209,10 +215,10 @@ func (stats *ValueStats) calculateMaxFrequency() float64 {
 
 // calculateReuseRatio returns the ratio of total occurrences to unique values
 func (stats *ValueStats) calculateReuseRatio() float64 {
-	if len(stats.Values) == 0 {
+	if stats.Values.Len() == 0 {
 		return 0
 	}
-	return float64(stats.TotalOccurrences) / float64(len(stats.Values))
+	return float64(stats.TotalOccurrences) / float64(stats.Values.Len())
 }
 
 // GetJoinTableCandidates returns fields that should be join tables with their scores
@@ -220,13 +226,13 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 	candidates := make(map[string]float64)
 
 	for field, stats := range d.FieldStats {
-		if stats.TotalOccurrences == 0 || len(stats.Values) == 0 {
+		if stats.TotalOccurrences == 0 || stats.Values.Len() == 0 {
 			continue
 		}
 
 		// Calculate base metrics
 		entropy := stats.calculateEntropy()
-		maxEntropy := math.Log2(float64(len(stats.Values)))
+		maxEntropy := math.Log2(float64(stats.Values.Len()))
 		normalizedEntropy := entropy / maxEntropy
 		inverseEntropy := 1 - normalizedEntropy
 		gini := stats.calculateGini()
@@ -235,9 +241,9 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 		// Calculate reuse ratio based on field type
 		var reuseRatio float64
 		if stats.IsArray {
-			reuseRatio = float64(stats.TotalElements) / float64(len(stats.Values))
+			reuseRatio = float64(stats.TotalElements) / float64(stats.Values.Len())
 		} else {
-			reuseRatio = float64(stats.TotalOccurrences) / float64(len(stats.Values))
+			reuseRatio = float64(stats.TotalOccurrences) / float64(stats.Values.Len())
 		}
 
 		// Calculate final score
@@ -282,18 +288,17 @@ func (d *TableDeriver) GetFieldInfo() map[string]*FieldInfo {
 		}
 
 		fieldInfo := &FieldInfo{
-			Name:           field,
-			IsArray:        stats.IsArray,
-			ElementType:    stats.ElementType,
-			TotalRecords:   stats.TotalOccurrences,
-			TotalElements:  stats.TotalElements,
-			UniqueValues:   len(stats.Values),
-			ValueFrequency: stats.Values,
+			Name:          field,
+			IsArray:       stats.IsArray,
+			ElementType:   stats.ElementType,
+			TotalRecords:  stats.TotalOccurrences,
+			TotalElements: stats.TotalElements,
+			UniqueValues:  stats.Values.Len(),
 		}
 
 		// Calculate metrics for categorization
 		entropy := stats.calculateEntropy()
-		maxEntropy := math.Log2(float64(len(stats.Values)))
+		maxEntropy := math.Log2(float64(stats.Values.Len()))
 		normalizedEntropy := entropy / maxEntropy
 		inverseEntropy := 1 - normalizedEntropy
 		gini := stats.calculateGini()
@@ -302,9 +307,9 @@ func (d *TableDeriver) GetFieldInfo() map[string]*FieldInfo {
 		// Calculate reuse ratio based on field type
 		var reuseRatio float64
 		if stats.IsArray {
-			reuseRatio = float64(stats.TotalElements) / float64(len(stats.Values))
+			reuseRatio = float64(stats.TotalElements) / float64(stats.Values.Len())
 		} else {
-			reuseRatio = float64(stats.TotalOccurrences) / float64(len(stats.Values))
+			reuseRatio = float64(stats.TotalOccurrences) / float64(stats.Values.Len())
 		}
 
 		// Calculate score

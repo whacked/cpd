@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/whacked/yamdb/pkg/io/jsonl"
+	"github.com/whacked/yamdb/pkg/relational"
 )
 
 func readTestFile(t *testing.T, filename string) string {
@@ -238,6 +239,49 @@ func ProcessorToRawJSONL(processor *JSONLProcessor) string {
 
 // ProcessorToCompactedJSONL converts a processor's records to compacted JSONL format
 func ProcessorToCompactedJSONL(processor *JSONLProcessor) string {
+
+	deriver := relational.NewTableDeriver()
+	err := deriver.ProcessHistory(processor.RecordHistory)
+	if err != nil {
+		// this is a shit return value
+		fmt.Printf("ERROR: Failed to process history: %v\n", err)
+		return ""
+	}
+
+	fieldInfo := deriver.GetFieldInfo()
+	fmt.Printf("fieldInfo: %+v\n", fieldInfo)
+
+	valueConverters := make(map[string]func(interface{}) interface{})
+	for field, info := range fieldInfo {
+		fmt.Printf("field: %q, info: %+v\n", field, info)
+
+		if info.Category == relational.FieldCategoryOneToMany {
+			fmt.Printf("  category: %q\n", relational.GetCategoryString(info.Category))
+			fmt.Printf("  isArray: %v\n", info.IsArray)
+			fmt.Printf("  uniqueValues: %d\n", info.UniqueValues)
+			fmt.Printf("  totalRecords: %d\n", info.TotalRecords)
+			// demo: render the mapping table in yaml
+			fmt.Printf("\n########### DEMO ############\n%+v:\n", field)
+			fmt.Printf("  %+v\n", info)
+
+			fieldStats := deriver.FieldStats[field]
+			idLookup := make(map[string]interface{})
+			for key := range fieldStats.Values.Keys() {
+				idLookup[key] = len(idLookup) + 1
+				fmt.Printf("  %+v: %+v\n", key, idLookup[key])
+			}
+			fmt.Printf("#############################\n\n")
+
+			valueConverters[field] = func(value interface{}) interface{} {
+				return idLookup[value.(string)]
+			}
+		} else {
+			valueConverters[field] = nil
+		}
+	}
+
+	// TODO: this should be abstracted
+
 	var lines []string
 
 	fmt.Printf("columns: %v\n", processor.OrderedColumns)
@@ -254,6 +298,13 @@ func ProcessorToCompactedJSONL(processor *JSONLProcessor) string {
 		var values []interface{}
 		for _, col := range processor.OrderedColumns {
 			if value, ok := record.Get(col.Name); ok {
+
+				maybeConverter := valueConverters[col.Name]
+				if maybeConverter != nil && value != nil {
+					fmt.Printf("  converting %+v\n", value)
+					value = maybeConverter(value)
+				}
+
 				values = append(values, value)
 			} else {
 				values = append(values, nil)
@@ -306,29 +357,33 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 		/*
 			{
 				name:                "basic conversion",
-				jsonlFile:          "basic.jsonl",
-				yamlFile:           "basic.yaml",
-				serializerFn:       ProcessorToRawJSONL,
+				jsonlFile:           "basic.jsonl",
+				yamlFile:            "basic.yaml",
+				serializerFn:        ProcessorToRawJSONL,
 				yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
 			},
-		*/
-		{
-			// comment order is wrong!
-			name:                "compacted conversion",
-			jsonlFile:           "compacted.jsonl",
-			yamlFile:            "compacted.yaml",
-			serializerFn:        ProcessorToCompactedJSONL,
-			yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlArray,
-		},
+			// */
+
 		/*
 			{
-				name:                "meta version conversion",
-				jsonlFile:          "meta_version.jsonl",
-				yamlFile:           "meta_version.yaml",
-				serializerFn:       ProcessorToExpandedJSONL,
-				yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
+				// comment order is wrong!
+				name:                "compacted conversion",
+				jsonlFile:           "compacted.jsonl",
+				yamlFile:            "compacted.yaml",
+				serializerFn:        ProcessorToCompactedJSONL,
+				yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlArray,
 			},
-		*/
+			// */
+
+		// /*
+		{
+			name:                "meta version conversion",
+			jsonlFile:           "meta_version.jsonl",
+			yamlFile:            "meta_version.yaml",
+			serializerFn:        ProcessorToExpandedJSONL,
+			yamlLineProcessorFn: YamlJsonlLineToQuotedJsonlLine,
+		},
+		// */
 	}
 
 	for _, tt := range tests {

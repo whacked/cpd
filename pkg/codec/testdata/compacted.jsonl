@@ -1,0 +1,13 @@
+{"status":"on","time":1,"comment":"system initialized"}       // blah blah
+{"status":"off","time":2,"comment":"manual shutdown"}
+{"status":"on","time":3,"comment":"auto-restart triggered"}
+{"status":"standby","time":4,"comment":"awaiting input"}
+// ignore ignore
+{"status":"off","time":5,"comment":"manual shutdown"}
+{"status":"error","time":6,"comment":"fault code 17"}
+{"time":7,"status":"on","comment":"system idle"}
+{"time":8,"status":"off","comment":"scheduled cycle"}
+{"status":"standby","time":9,"comment":"queued"}
+{"status":null,"time":10,"comment":"unlogged state"}
+// do not read me
+

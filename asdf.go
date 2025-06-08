@@ -799,8 +799,30 @@ func runJsonToYamlDemo(filepath string) {
 	fmt.Println(yamlBuilder.String())
 }
 
-func main() {
-	// runYamlDemo()
+func main2() {
+	if false {
+
+		runYamlDemo()
+		os.Exit(0)
+
+	} else {
+		fmt.Println("hello")
+
+		source, err := os.ReadFile("tests/example-1.yaml")
+		if err != nil {
+			fmt.Printf("error reading file: %v\n", err)
+			log.Fatal(err)
+		}
+		var result []map[string]interface{}
+		err = yaml.Unmarshal(source, &result)
+		if err != nil {
+			fmt.Printf("error unmarshalling yaml: %v\n", err)
+			log.Fatal(err)
+		}
+		fmt.Printf("result: %+v\n", result)
+		os.Exit(0)
+
+	}
 
 	// Get filepath from args or use default
 	filepath := "tests/example-2.jsonl"
