@@ -1,17 +1,21 @@
 package codec
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/GitRowin/orderedmapjson"
 	"github.com/stretchr/testify/assert"
 	"github.com/whacked/yamdb/pkg/io/jsonl"
+	"github.com/whacked/yamdb/pkg/io/yaml"
 	"github.com/whacked/yamdb/pkg/relational"
 )
 
@@ -22,6 +26,7 @@ func readTestFile(t *testing.T, filename string) string {
 	}
 	return string(content)
 }
+
 func RemoveCommentsAndBlankLinesFromYaml(yamlStr string) string {
 	var nonEmptyLines []string
 	for _, line := range strings.Split(yamlStr, "\n") {
@@ -345,7 +350,6 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 
 		// /*
 		{
-			// comment order is wrong!
 			name:                "compacted conversion",
 			jsonlInputFile:      "compacted.jsonl",
 			yamlFile:            "compacted.yaml",
@@ -421,7 +425,7 @@ func TestJSONLToYAMLConversion(t *testing.T) {
 	}
 }
 
-/*
+// /*
 func TestYAMLToJSONLConversion(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -429,76 +433,206 @@ func TestYAMLToJSONLConversion(t *testing.T) {
 		jsonlFile string
 		mode      string // "raw", "expanded", or "compacted"
 	}{
+		// /*  working
 		{
 			name:      "raw conversion",
 			yamlFile:  "basic.yaml",
 			jsonlFile: "basic.jsonl",
 			mode:      "raw",
 		},
+		// */
+
+		// /*
 		{
 			name:      "compacted conversion",
 			yamlFile:  "compacted.yaml",
 			jsonlFile: "compacted.jsonl",
 			mode:      "compacted",
 		},
+		// */
+
+		// /*
 		{
 			name:      "expanded conversion",
 			yamlFile:  "meta_version.yaml",
-			jsonlFile: "meta_version.jsonl",
+			jsonlFile: "meta_version.expanded.jsonl",
 			mode:      "expanded",
 		},
+		// */
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Read test files
 			yamlInput := readTestFile(t, tt.yamlFile)
-			expectedJSONL := readTestFile(t, tt.jsonlFile)
 
-			// Parse YAML
-			var yamlData map[string]interface{}
-			err := yaml.Unmarshal([]byte(yamlInput), &yamlData)
+			// Parse YAML using our custom yamlReader
+			yamlReader := yaml.NewReader(bytes.NewReader([]byte(yamlInput)))
+
+			docs, err := yamlReader.ReadAll()
+			if err != nil {
+				t.Fatalf("Failed to read YAML: %v", err)
+			}
+
+			// Process each document
+			for i, doc := range docs {
+				fmt.Printf("\n\n\n=== Document %d ===\n", i+1)
+
+				// Write the document back to YAML
+				var buf bytes.Buffer
+				writer := yaml.NewWriter(&buf)
+				if err := writer.Write(doc); err != nil {
+					log.Fatalf("Failed to write YAML: %v", err)
+				}
+				// fmt.Printf("\nYAML Output:\n%s\n", buf.String())
+			}
+
+			referenceJsonl := readTestFile(t, tt.jsonlFile)
+			jsonlReader := jsonl.NewReader(io.NopCloser(strings.NewReader(referenceJsonl)))
+			defer jsonlReader.Close()
+
+			jsonlRecords, err := jsonlReader.ReadAll()
 			assert.NoError(t, err)
 
-			// Create processor
-			processor := NewJSONLProcessor()
+			allRecordsFromYaml := make([]*orderedmapjson.AnyOrderedMap, 0)
 
-			// Process version and meta if present
-			if version, ok := yamlData["_version"].(int); ok {
-				processor.Version = version
-			}
-			if meta, ok := yamlData["_meta"].(map[string]interface{}); ok {
-				processor.Meta = meta
-			}
+			currentVersion := 0
+			currentSchemas := orderedmapjson.NewAnyOrderedMap()
+			currentMeta := orderedmapjson.NewAnyOrderedMap()
+			currentColumns := make([]string, 0)
+			currentTableMappings := make(map[string]map[string]int)
 
-			// Process schema if present
-			if schema, ok := yamlData["_schemas"].(map[string]interface{}); ok {
-				processor.Schema = schema
-			}
+			for docIndex, doc := range docs {
 
-			// Process data records
-			if data, ok := yamlData["data"].([]interface{}); ok {
-				for _, record := range data {
-					if recordMap, ok := record.(map[string]interface{}); ok {
-						_, err := processor.ProcessRecord(recordMap)
-						assert.NoError(t, err)
+				fmt.Printf(">>> doc: %d <<<\n%+v\n. . . . .\n", docIndex, doc)
+
+				if newMappings := doc.GetTableMappings(); newMappings != nil {
+					for table, mappings := range newMappings {
+						if _, ok := currentTableMappings[table]; !ok {
+							currentTableMappings[table] = make(map[string]int)
+						}
+						for k, v := range mappings {
+							currentTableMappings[table][k] = v
+						}
 					}
 				}
+				reverseMappings := make(map[string]map[int]string)
+				for key, mappings := range currentTableMappings {
+					reverseMappings[key] = make(map[int]string)
+					for k, v := range mappings {
+						fmt.Printf("making reverse mappings for [%s] %d -> %s\n", key, v, k)
+						reverseMappings[key][v] = k
+					}
+				}
+				fmt.Printf("tableMappings: %+v\n", currentTableMappings)
+
+				columns, hasColumns := doc.GetColumns()
+				if !hasColumns {
+					fmt.Printf("no columns found\n")
+				} else {
+					fmt.Printf("columns: %+v\n", columns)
+					currentColumns = columns
+				}
+
+				if newVersion, ok := doc.GetVersion(); ok {
+					currentVersion = newVersion
+				}
+
+				if newMeta, ok := doc.GetMeta(); ok {
+					currentMeta = newMeta
+				}
+
+				if newSchemas, ok := doc.GetSchemas(); ok {
+					currentSchemas = newSchemas
+				}
+
+				if data, ok := doc.GetData(); ok {
+					fmt.Printf("processing records in %s [%d]: (%d records)\n", tt.yamlFile, docIndex, len(data))
+					for _, record := range data {
+						switch {
+						case record.Object != nil:
+
+							if tt.mode == "raw" {
+								allRecordsFromYaml = append(allRecordsFromYaml, record.Object)
+							} else if tt.mode == "expanded" {
+
+								allRecordsFromYaml = append(
+									allRecordsFromYaml,
+									ExpandRecord(record.Object, currentVersion, currentSchemas, currentMeta),
+								)
+							}
+
+						case record.Array != nil:
+							m := orderedmapjson.NewAnyOrderedMap()
+							if len(record.Array) != len(columns) {
+								t.Errorf("Array record length %d does not match columns length %d", len(record.Array), len(columns))
+								continue
+							}
+							// not clear why something like [1, 2, "stuff"] yields "1" as a string
+							// but with this gratuitous type conversion, we do recover the value
+							for i, v := range record.Array {
+								key := columns[i]
+								if mappings, ok := reverseMappings[key]; ok {
+									if strVal, ok := v.(string); ok {
+										if intVal, err := strconv.Atoi(strVal); err == nil {
+											if mappedVal, ok := mappings[intVal]; ok {
+												m.Set(key, mappedVal)
+												continue
+											}
+										}
+									}
+								}
+								m.Set(key, v)
+							}
+							allRecordsFromYaml = append(allRecordsFromYaml, m)
+
+						case record.String != "":
+							// FIXME this is wrong.
+							// when string is encountered we need to first convert it to array
+							// then process it with the array processor
+							// Convert string to ordered map if needed
+							m := orderedmapjson.NewAnyOrderedMap()
+							m.Set("value", record.String)
+							allRecordsFromYaml = append(allRecordsFromYaml, m)
+						}
+					}
+				}
+				fmt.Printf("doc object: %+v\n", doc)
 			}
 
-			// Convert back to JSONL based on mode
-			var jsonlOutput string
-			switch tt.mode {
-			case "raw":
-				jsonlOutput = ProcessorToRawJSONL(processor)
-			case "compacted":
-				jsonlOutput = ProcessorToCompactedJSONL(processor)
-			case "expanded":
-				jsonlOutput = ProcessorToExpandedJSONL(processor)
-			}
+			fmt.Printf("jsonlRecords: %+v\n", jsonlRecords)
 
-			assert.Equal(t, strings.TrimSpace(expectedJSONL), strings.TrimSpace(jsonlOutput))
+			assert.Equal(t, len(jsonlRecords), len(allRecordsFromYaml))
+
+			// check generated json equality
+			for i := range jsonlRecords {
+				recordIndex := i // capture loop var
+				t.Run(fmt.Sprintf("record %d", recordIndex), func(t *testing.T) {
+					jsonlRecord := jsonlRecords[recordIndex]
+
+					if tt.mode == "compacted" {
+						// need to re-order the columns
+						reorderedJsonlRecord := orderedmapjson.NewAnyOrderedMap()
+						for _, column := range currentColumns {
+							value, ok := jsonlRecord.Get(column)
+							if !ok {
+								fmt.Printf("no value found for column %s\n", column)
+								continue
+							}
+							reorderedJsonlRecord.Set(column, value)
+						}
+						jsonlRecord = reorderedJsonlRecord
+					}
+
+					yamlRecord := allRecordsFromYaml[recordIndex]
+
+					assert.Equal(t, jsonlRecord.String(), yamlRecord.String(),
+						"Mismatch at record %d\njsonl: %s\nyaml:  %s", recordIndex, jsonlRecord.String(), yamlRecord.String())
+				})
+				break
+			}
 		})
 	}
 }
+
 // */

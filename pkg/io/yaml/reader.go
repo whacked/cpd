@@ -10,9 +10,188 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DebugPrint enables/disables debug printing
+var DebugPrint = false
+
 // Document represents a single YAML document with ordered keys
 type Document struct {
 	Data *orderedmapjson.AnyOrderedMap
+}
+
+// PrintDebug prints debug information about the document if DebugPrint is enabled
+func (d *Document) PrintDebug() {
+	if !DebugPrint {
+		return
+	}
+
+	// Print version if present
+	if version, ok := d.GetVersion(); ok {
+		fmt.Printf("Version: %v\n", version)
+	}
+
+	// Print metadata if present
+	if meta, ok := d.GetMeta(); ok {
+		fmt.Printf("Metadata:\n")
+		for el := meta.Front(); el != nil; el = el.Next() {
+			fmt.Printf("  %s: %v\n", el.Key, el.Value)
+		}
+	}
+
+	// Print schemas if present
+	if schemas, ok := d.GetSchemas(); ok {
+		fmt.Printf("Schemas:\n")
+		for el := schemas.Front(); el != nil; el = el.Next() {
+			fmt.Printf("  %s: %v\n", el.Key, el.Value)
+		}
+	}
+	// Print data if present
+	if records, ok := d.GetData(); ok {
+		fmt.Printf("Data:\n")
+		for _, record := range records {
+			fmt.Printf("  - ")
+			switch {
+			case record.Object != nil:
+				for el := record.Object.Front(); el != nil; el = el.Next() {
+					fmt.Printf("%s: %v ", el.Key, el.Value)
+				}
+			case record.Array != nil:
+				for i, v := range record.Array {
+					fmt.Printf("%d: %v ", i, v)
+				}
+			case record.String != "":
+				fmt.Printf("%v", record.String)
+			}
+			fmt.Printf("\n")
+		}
+	}
+
+	// Print columns if present
+	if columns, ok := d.GetColumns(); ok {
+		fmt.Printf("Columns: %v\n", columns)
+	}
+}
+
+// GetVersion returns the document version if present
+func (d *Document) GetVersion() (int, bool) {
+	if version, ok := d.Data.Get("_version"); ok {
+		if v, ok := version.(int); ok {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// GetMeta returns the document metadata if present
+func (d *Document) GetMeta() (*orderedmapjson.AnyOrderedMap, bool) {
+	if meta, ok := d.Data.Get("_meta"); ok {
+		if m, ok := meta.(*orderedmapjson.AnyOrderedMap); ok {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// GetSchemas returns the document schemas if present
+func (d *Document) GetSchemas() (*orderedmapjson.AnyOrderedMap, bool) {
+	if schemas, ok := d.Data.Get("_schemas"); ok {
+		if s, ok := schemas.(*orderedmapjson.AnyOrderedMap); ok {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+type WrappedRecord struct {
+	Object *orderedmapjson.AnyOrderedMap
+	Array  []interface{}
+	String string
+}
+
+// GetData returns the document data records if present
+func (d *Document) GetData() ([]WrappedRecord, bool) {
+	if data, ok := d.Data.Get("data"); ok {
+		if dataArray, ok := data.([]interface{}); ok {
+			var records []WrappedRecord
+			for _, record := range dataArray {
+				var wrappedRecord WrappedRecord
+
+				switch v := record.(type) {
+				case *orderedmapjson.AnyOrderedMap:
+					wrappedRecord.Object = v
+				case []interface{}:
+					wrappedRecord.Array = v
+				case string:
+					wrappedRecord.String = v
+				default:
+					// For unhandled types, convert to string
+					wrappedRecord.String = fmt.Sprintf("%v", v)
+				}
+
+				records = append(records, wrappedRecord)
+			}
+			return records, true
+		}
+	}
+	return nil, false
+}
+
+// GetColumns returns the document columns if present
+func (d *Document) GetColumns() ([]string, bool) {
+	if columns, ok := d.Data.Get("_columns"); ok {
+		// First try direct string array
+		if c, ok := columns.([]string); ok {
+			return c, true
+		}
+
+		// Try interface array and convert to strings
+		if c, ok := columns.([]interface{}); ok {
+			result := make([]string, len(c))
+			for i, v := range c {
+				if s, ok := v.(string); ok {
+					result[i] = s
+				} else {
+					// If any element isn't a string, return false
+					return nil, false
+				}
+			}
+			return result, true
+		}
+
+		// Debug print for unexpected types
+		fmt.Printf("Unexpected columns type: %T, value: %+v\n", columns, columns)
+	}
+	return nil, false
+}
+
+func (d *Document) GetTableMappings() map[string]map[string]int {
+	result := make(map[string]map[string]int)
+
+	// Iterate through all top-level keys in the document
+	for key := range d.Data.Keys() {
+
+		// Skip special keys that start with _ and the data key
+		if strings.HasPrefix(key, "_") || key == "data" {
+			continue
+		}
+		// Get the mapping table
+		if tableData, ok := d.Data.Get(key); ok {
+			if mappings, ok := tableData.(*orderedmapjson.AnyOrderedMap); ok {
+				// Initialize the inner map for this table
+				result[key] = make(map[string]int)
+
+				// Convert each key-value pair to string->int mapping
+				for mapKey := range mappings.Keys() {
+					if val, ok := mappings.Get(mapKey); ok {
+						if intVal, ok := val.(int); ok {
+							result[key][mapKey] = intVal
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // Reader reads YAML documents while preserving key order
@@ -160,7 +339,7 @@ func convertNodeToOrderedMap(node *yaml.Node, result *orderedmapjson.AnyOrderedM
 
 // String returns the YAML document as a string
 func (d *Document) String() string {
-	if d.Data == nil 
+	if d.Data == nil {
 		return ""
 	}
 

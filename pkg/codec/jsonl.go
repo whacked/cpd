@@ -37,6 +37,7 @@ func RecursiveMergeOrderedMaps(oldMap *orderedmapjson.AnyOrderedMap, newMap *ord
 	}
 }
 
+// TODO: DELETE THIS
 // RecordToJSONL converts a RecordWithMetadata to a JSONL string, only including the record data
 func RecordToJSONL(record types.RecordWithMetadata) (string, error) {
 	// Marshal only the record data to JSON
@@ -48,6 +49,7 @@ func RecordToJSONL(record types.RecordWithMetadata) (string, error) {
 	return string(jsonBytes), nil
 }
 
+// TODO: DELETE THIS
 // JSONLToRecord converts a JSONL string back to a RecordWithMetadata by inferring column types
 func JSONLToRecord(jsonl string) (types.RecordWithMetadata, error) {
 	// Unmarshal the raw data
@@ -463,8 +465,93 @@ func flattenMapRecursive(prefix string, m *orderedmapjson.AnyOrderedMap, delimit
 	}
 }
 
-func (p *JSONLProcessor) ToExpandedJSONL(expandAndCarrySpecialFields bool) string {
+// ExpandRecord combines version, schema, and meta data with a record into a single ordered map
+func ExpandRecord(record *orderedmapjson.AnyOrderedMap, version int, schemas, meta *orderedmapjson.AnyOrderedMap) *orderedmapjson.AnyOrderedMap {
+	if record == nil {
+		return nil
+	}
 
+	fmt.Printf("VERSION: %d\n", version)
+
+	dataRecord := record.Copy()
+	outputRecord := orderedmapjson.NewAnyOrderedMap()
+
+	// handle special records
+	if recordVersion, ok := dataRecord.Get("_version"); ok {
+		version = int(recordVersion.(float64))
+		dataRecord.Delete("_version")
+	}
+	if recordSchema, ok := dataRecord.Get("_schema"); ok {
+		RecursiveMergeOrderedMaps(schemas, recordSchema.(*orderedmapjson.AnyOrderedMap))
+		dataRecord.Delete("_schema")
+	}
+	if recordMeta, ok := dataRecord.Get("_meta"); ok {
+		RecursiveMergeOrderedMaps(meta, recordMeta.(*orderedmapjson.AnyOrderedMap))
+		dataRecord.Delete("_meta")
+	}
+
+	if dataRecord.Len() == 0 {
+		return nil
+	}
+
+	if version > 0 {
+		outputRecord.Set("_version", version)
+	} else {
+		fmt.Printf("no version found in record\n")
+	}
+
+	if meta.Len() > 0 {
+		expandedMeta := ExpandMetaDataFields(meta, ".")
+		for key := range expandedMeta.Keys() {
+			val, _ := expandedMeta.Get(key)
+			outputRecord.Set(key, val)
+		}
+	}
+
+	// add the data record to the output record
+	for key := range dataRecord.Keys() {
+		val, _ := dataRecord.Get(key)
+		outputRecord.Set(key, val)
+	}
+
+	return outputRecord
+}
+
+// OrderedMapToJSONL converts a single ordered map to a JSONL string
+func OrderedMapToJSONL(record *orderedmapjson.AnyOrderedMap) string {
+	if record == nil {
+		return ""
+	}
+
+	var jsonl strings.Builder
+	jsonl.WriteString("{")
+	keyIndex := 0
+	for key := range record.Keys() {
+		if keyIndex > 0 {
+			jsonl.WriteString(",")
+		}
+		keyIndex++
+		// Marshal the key
+		jsonKey, _ := json.Marshal(key)
+		jsonl.Write(jsonKey)
+		jsonl.WriteString(":")
+
+		val, _ := record.Get(key)
+		// Marshal the value (using built-in marshaller for nested structures)
+		var valBytes []byte
+		if f, ok := val.(float64); ok && float64(int64(f)) == f {
+			// If it's a float that looks like an integer (e.g. 25.0), force decimal point
+			valBytes = []byte(fmt.Sprintf("%.1f", f))
+		} else {
+			valBytes, _ = json.Marshal(val)
+		}
+		jsonl.Write(valBytes)
+	}
+	jsonl.WriteString("}\n")
+	return jsonl.String()
+}
+
+func (p *JSONLProcessor) ToExpandedJSONL(expandAndCarrySpecialFields bool) string {
 	var currentVersion int = 0
 	currentSchemas := *orderedmapjson.NewAnyOrderedMap()
 	currentMeta := *orderedmapjson.NewAnyOrderedMap()
@@ -472,77 +559,22 @@ func (p *JSONLProcessor) ToExpandedJSONL(expandAndCarrySpecialFields bool) strin
 
 	for _, record := range p.RecordHistory {
 
-		if record == nil {
-			continue
-		}
-
-		dataRecord := record.Copy()
-		outputRecord := orderedmapjson.NewAnyOrderedMap()
-
-		// handle special records
-		if recordVersion, ok := dataRecord.Get("_version"); ok {
-			currentVersion = int(recordVersion.(float64))
-			dataRecord.Delete("_version")
-		}
-		if recordSchema, ok := dataRecord.Get("_schema"); ok {
-			RecursiveMergeOrderedMaps(&currentSchemas, recordSchema.(*orderedmapjson.AnyOrderedMap))
-			dataRecord.Delete("_schema")
-		}
-		if recordMeta, ok := dataRecord.Get("_meta"); ok {
-			RecursiveMergeOrderedMaps(&currentMeta, recordMeta.(*orderedmapjson.AnyOrderedMap))
-			dataRecord.Delete("_meta")
-		}
-
-		if dataRecord.Len() == 0 {
-			continue
-		}
-
 		if expandAndCarrySpecialFields {
-			// Add version if set
-			if currentVersion > 0 {
-				outputRecord.Set("_version", currentVersion)
+			if newVersion, ok := record.Get("_version"); ok {
+				currentVersion = int(newVersion.(float64))
 			}
-
-			if currentMeta.Len() > 0 {
-				expandedMeta := ExpandMetaDataFields(&currentMeta, ".")
-				for key := range expandedMeta.Keys() {
-					val, _ := expandedMeta.Get(key)
-					outputRecord.Set(key, val)
-				}
+			if newSchema, ok := record.Get("_schema"); ok {
+				RecursiveMergeOrderedMaps(&currentSchemas, newSchema.(*orderedmapjson.AnyOrderedMap))
+			}
+			if newMeta, ok := record.Get("_meta"); ok {
+				RecursiveMergeOrderedMaps(&currentMeta, newMeta.(*orderedmapjson.AnyOrderedMap))
 			}
 		}
 
-		// add the data record to the output record
-		for key := range dataRecord.Keys() {
-			val, _ := dataRecord.Get(key)
-			outputRecord.Set(key, val)
+		expandedRecord := ExpandRecord(record, currentVersion, &currentSchemas, &currentMeta)
+		if expandedRecord != nil {
+			jsonl.WriteString(OrderedMapToJSONL(expandedRecord))
 		}
-
-		// Manually build JSONL output preserving key order
-		jsonl.WriteString("{")
-		keyIndex := 0
-		for key := range outputRecord.Keys() {
-			if keyIndex > 0 {
-				jsonl.WriteString(",")
-			}
-			keyIndex++
-			// Marshal the key
-			jsonKey, _ := json.Marshal(key)
-			jsonl.Write(jsonKey)
-			jsonl.WriteString(":")
-
-			val, _ := outputRecord.Get(key)
-			// Marshal the value (using built-in marshaller for nested structures)
-			var valBytes []byte
-			if f, ok := val.(float64); ok && float64(int64(f)) == f {
-				// If it's a float that looks like an integer (e.g. 25.0), force decimal point
-				valBytes = []byte(fmt.Sprintf("%.1f", f))
-			} else {
-				valBytes, _ = json.Marshal(val)
-			}
-			jsonl.Write(valBytes)
-		}
-		jsonl.WriteString("}\n")
 	}
 
 	return jsonl.String()

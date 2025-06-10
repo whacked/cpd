@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/GitRowin/orderedmapjson"
+	"github.com/whacked/yamdb/pkg/io/jsonl"
 )
 
 func CleanString(s string) string {
@@ -183,24 +184,8 @@ func (w *Writer) writeDataItem(item interface{}) error {
 func (w *Writer) formatValue(buf *strings.Builder, val interface{}) error {
 	switch v := val.(type) {
 	case *orderedmapjson.AnyOrderedMap:
-		buf.WriteString("{")
-		first := true
-		for el := v.Front(); el != nil; el = el.Next() {
-			if !first {
-				buf.WriteString(", ")
-			}
-			first = false
-
-			// Key
-			buf.WriteString(w.formatKey(el.Key))
-			buf.WriteString(": ")
-
-			// Value (recursive)
-			if err := w.formatValue(buf, el.Value); err != nil {
-				return err
-			}
-		}
-		buf.WriteString("}")
+		// Use OrderedMapToJSONL for map formatting
+		buf.WriteString(jsonl.OrderedMapToJSONL(v))
 
 	case []interface{}:
 		buf.WriteString("[")

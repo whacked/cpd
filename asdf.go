@@ -663,8 +663,8 @@ func runJsonToYamlDemo(filepath string) {
 	fmt.Println(yamlBuilder.String())
 }
 
-func main() {
-	if false {
+func main2() {
+	if !false {
 
 		runYamlDemo()
 		os.Exit(0)
