@@ -471,8 +471,6 @@ func ExpandRecord(record *orderedmapjson.AnyOrderedMap, version int, schemas, me
 		return nil
 	}
 
-	fmt.Printf("VERSION: %d\n", version)
-
 	dataRecord := record.Copy()
 	outputRecord := orderedmapjson.NewAnyOrderedMap()
 
@@ -570,6 +568,9 @@ func (p *JSONLProcessor) ToExpandedJSONL(expandAndCarrySpecialFields bool) strin
 				RecursiveMergeOrderedMaps(&currentMeta, newMeta.(*orderedmapjson.AnyOrderedMap))
 			}
 		}
+
+		fmt.Printf("current schemas: %+v\n", currentSchemas)
+		fmt.Printf("current meta: %+v\n", currentMeta)
 
 		expandedRecord := ExpandRecord(record, currentVersion, &currentSchemas, &currentMeta)
 		if expandedRecord != nil {

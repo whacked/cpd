@@ -22,7 +22,8 @@
 _version: 1
 _meta:
   location: lab1
-  device: sensor23
+  device:
+    id: sensor23
 _schemas:
   data:
     type: array
