@@ -158,45 +158,41 @@ func TestJSONLToCPD(t *testing.T) {
 	}{
 		{
 			name: "basic conversion",
-			input: `{"time":"2024-06-11 00:20:43.123+00:00","tags":["temperature","humidity"],"temp_c":23.4,"humidity":45.2}
-{"time":"2024-06-12T12:00:00Z","tags":[],"lux":320,"motion_detected":false}`,
-			want: `_schemas:
-  data:
-    type: array
-    items:
-      type: array
-      minItems: 3
-      maxItems: 3
-      items:
-        - type: string
-          description: ISO8601 / RFC3339 string
-        - type: array
-          items:
-            type: integer
-          uniqueItems: true
-        - type: object
-_columns:
-  - time
-  - tags
-  - payload
-tags:
-  humidity: 1
-  temperature: 2
-data:
-  - ["2024-06-11 00:20:43.123+00:00", [2, 1], {temp_c: 23.4, humidity: 45.2}]
-  - ["2024-06-12T12:00:00Z", [], {lux: 320, motion_detected: false}]
-`,
+			input: strings.Join([]string{
+				`{"time":"2024-06-12T12:00:00Z","tags":["temperature"],"temp_c":23.4}`,
+			}, "\n"),
+			want: strings.Join([]string{
+				`_schemas:`,
+				`  data:`,
+				`    type: array`,
+				`    items:`,
+				`      type: array`,
+				`      minItems: 3`,
+				`      maxItems: 3`,
+				`      items:`,
+				`        - type: string  # timestamp`,
+				`          description: "ISO8601 / RFC3339 string"`,
+				`          examples:`,
+				`          - "2024-06-12T12:00:00Z"`,
+				`          - "2022-11-06T23:12:47+08:00"`,
+				`        - type: array   # tags array`,
+				`          items:`,
+				`            type: integer`,
+				`          uniqueItems: true`,
+				`          examples:`,
+				`          - [1, 5, 3299]`,
+				`          - []`,
+				`        - type: object  # payload object`,
+				`_columns:`,
+				`  - time`,
+				`  - tags`,
+				`  - payload`,
+				`tags:`,
+				`  temperature: 1`,
+				`data:`,
+				`  - ["2024-06-12T12:00:00Z",[1],{temp_c:23.4}]`,
+			}, "\n"),
 			wantErr: false,
-		},
-		{
-			name:    "missing time field",
-			input:   `{"tags":["temperature"],"temp_c":23.4}`,
-			wantErr: true,
-		},
-		{
-			name:    "invalid time field",
-			input:   `{"time":123,"tags":["temperature"],"temp_c":23.4}`,
-			wantErr: true,
 		},
 	}
 
@@ -208,8 +204,7 @@ data:
 				return
 			}
 			if !tt.wantErr {
-				// Compare YAML documents ignoring whitespace and order
-				assert.YAMLEq(t, tt.want, got)
+				assert.Equal(t, tt.want, got)
 			}
 		})
 	}

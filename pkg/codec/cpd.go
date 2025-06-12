@@ -8,6 +8,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/GitRowin/orderedmapjson"
 	"github.com/whacked/yamdb/pkg/io/yamlutil"
@@ -230,8 +231,9 @@ func splitYAMLDocuments(data []byte, atEOF bool) (advance int, token []byte, err
 
 // JSONLToCPD converts a JSONL file to CPD YAML format
 func JSONLToCPD(r io.Reader) (string, error) {
-	// First pass: collect all unique tags
+	// First pass: collect all unique tags and track version
 	tagSet := make(map[string]struct{})
+	var currentVersion int
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		// Parse into YAML node to preserve order
@@ -244,6 +246,13 @@ func JSONLToCPD(r io.Reader) (string, error) {
 		record := orderedmapjson.NewAnyOrderedMap()
 		if err := yamlutil.ConvertNodeToOrderedMap(&node, record); err != nil {
 			return "", fmt.Errorf("failed to convert record to ordered map: %w", err)
+		}
+
+		// Track version if present
+		if version, ok := record.Get("_version"); ok {
+			if versionNum, ok := version.(float64); ok {
+				currentVersion = int(versionNum)
+			}
 		}
 
 		// Extract tags
@@ -331,51 +340,71 @@ func JSONLToCPD(r io.Reader) (string, error) {
 		data = append(data, []interface{}{timeStr, tagIDs, payload})
 	}
 
-	// Create YAML document
-	doc := orderedmapjson.NewAnyOrderedMap()
+	// Create a buffer for the YAML output
+	var buf bytes.Buffer
 
-	// Add schemas section
-	schemas := orderedmapjson.NewAnyOrderedMap()
-	dataSchema := orderedmapjson.NewAnyOrderedMap()
-	dataSchema.Set("type", "array")
-	itemsSchema := orderedmapjson.NewAnyOrderedMap()
-	itemsSchema.Set("type", "array")
-	itemsSchema.Set("minItems", 3)
-	itemsSchema.Set("maxItems", 3)
-	items := orderedmapjson.NewAnyOrderedMap()
-	items.Set("type", "string")
-	items.Set("description", "ISO8601 / RFC3339 string")
-	itemsArray := orderedmapjson.NewAnyOrderedMap()
-	itemsArray.Set("type", "array")
-	itemsArray.Set("items", map[string]string{"type": "integer"})
-	itemsArray.Set("uniqueItems", true)
-	itemsObject := orderedmapjson.NewAnyOrderedMap()
-	itemsObject.Set("type", "object")
-	itemsSchema.Set("items", []interface{}{items, itemsArray, itemsObject})
-	dataSchema.Set("items", itemsSchema)
-	schemas.Set("data", dataSchema)
-	doc.Set("_schemas", schemas)
+	// Write each section in explicit order
+	if currentVersion > 0 {
+		buf.WriteString("_version: ")
+		buf.WriteString(fmt.Sprintf("%d\n", currentVersion))
+	}
+
+	// Add schema section (already has correct indentation)
+	buf.WriteString(CommonPayloadDataSchema)
 
 	// Add columns section
-	doc.Set("_columns", []string{"time", "tags", "payload"})
+	buf.WriteString("_columns:\n")
+	buf.WriteString("  - time\n")
+	buf.WriteString("  - tags\n")
+	buf.WriteString("  - payload\n")
 
 	// Add tags section
-	tags := orderedmapjson.NewAnyOrderedMap()
+	buf.WriteString("tags:\n")
 	for tag, id := range tagMap {
-		tags.Set(tag, id)
-	}
-	doc.Set("tags", tags)
-
-	// Add data section
-	doc.Set("data", data)
-
-	// Convert to YAML
-	yamlBytes, err := yaml.Marshal(doc)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal YAML: %w", err)
+		buf.WriteString(fmt.Sprintf("  %s: %d\n", tag, id))
 	}
 
-	return string(yamlBytes), nil
+	// Add data section in compact format
+	buf.WriteString("data:")
+	for _, row := range data {
+		// Convert row to compact format
+		rowArray := row.([]interface{})
+		timeStr := rowArray[0].(string)
+		tags := rowArray[1].([]int)
+		payload := rowArray[2].(*orderedmapjson.AnyOrderedMap)
+
+		// Format the row as a single line with no extra spaces
+		buf.WriteString("\n  - [")
+		buf.WriteString(fmt.Sprintf("%q,", timeStr))
+		buf.WriteString(fmt.Sprintf("%v,", tags))
+
+		// Convert payload to YAML string with unquoted keys/values where possible
+		var payloadBuilder strings.Builder
+		payloadBuilder.WriteString("{")
+		keyIndex := 0
+		for el := payload.Front(); el != nil; el = el.Next() {
+			if keyIndex > 0 {
+				payloadBuilder.WriteString(",")
+			}
+			keyIndex++
+			// Format key (unquoted if possible)
+			key := el.Key
+			if needsQuoting(key) {
+				keyBytes, _ := json.Marshal(key)
+				payloadBuilder.Write(keyBytes)
+			} else {
+				payloadBuilder.WriteString(key)
+			}
+			payloadBuilder.WriteString(":")
+			// Format value (unquoted if possible)
+			payloadBuilder.WriteString(formatYAMLValue(el.Value))
+		}
+		payloadBuilder.WriteString("}")
+		buf.WriteString(payloadBuilder.String())
+		buf.WriteString("]")
+	}
+
+	return buf.String(), nil
 }
 
 // Helper functions
@@ -404,4 +433,55 @@ func parseInt(s string) int {
 	var i int
 	fmt.Sscanf(s, "%d", &i)
 	return i
+}
+
+// formatYAMLValue formats a value for YAML output, avoiding quotes when possible
+func formatYAMLValue(v interface{}) string {
+	switch val := v.(type) {
+	case string:
+		// Only quote strings that need it
+		if needsQuoting(val) {
+			return fmt.Sprintf("%q", val)
+		}
+		return val
+	case float64:
+		// Format floats with decimal point
+		if float64(int64(val)) == val {
+			return fmt.Sprintf("%.1f", val)
+		}
+		return fmt.Sprintf("%v", val)
+	case bool:
+		return fmt.Sprintf("%v", val)
+	case nil:
+		return "null"
+	default:
+		// For any other type, use json.Marshal to ensure proper formatting
+		if b, err := json.Marshal(val); err == nil {
+			return string(b)
+		}
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+// needsQuoting determines if a string needs to be quoted in YAML
+func needsQuoting(s string) bool {
+	// Empty string needs quotes
+	if s == "" {
+		return true
+	}
+
+	// Check for special YAML values
+	switch s {
+	case "null", "true", "false", "yes", "no", "on", "off", "y", "n":
+		return true
+	}
+
+	// Check for special characters or spaces
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+			return true
+		}
+	}
+
+	return false
 }
