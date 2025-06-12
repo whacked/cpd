@@ -14,6 +14,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CommonPayloadDataSchema is the fixed schema for CommonPayloadData format
+const CommonPayloadDataSchema = `_schemas:
+  data:
+    type: array
+    items:
+      type: array
+      minItems: 3
+      maxItems: 3
+      items:
+        - type: string  # timestamp
+          description: "ISO8601 / RFC3339 string"
+          examples:
+          - "2024-06-12T12:00:00Z"
+          - "2022-11-06T23:12:47+08:00"
+        - type: array   # tags array
+          items:
+            type: integer
+          uniqueItems: true
+          examples:
+          - [1, 5, 3299]
+          - []
+        - type: object  # payload object
+`
+
 // customMarshalJSON marshals a value to JSON, preserving decimal points for float values
 func customMarshalJSON(v interface{}) ([]byte, error) {
 	switch val := v.(type) {

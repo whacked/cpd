@@ -18,19 +18,7 @@ func TestCPDToJSONL(t *testing.T) {
 	}{
 		{
 			name: "basic conversion",
-			input: `_schemas:
-  data:
-    type: array
-    items:
-      type: array
-      minItems: 3
-      maxItems: 3
-      items:
-        - type: string
-        - type: array
-          items:
-            type: integer
-        - type: object
+			input: CommonPayloadDataSchema + `
 _columns:
   - time
   - tags
