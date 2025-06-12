@@ -89,7 +89,11 @@ pkgs.mkShell {
     #   # Now, gopls and staticcheck are available in $GOPATH/bin for this session.
     ensure-goenv() {  # get or create a go env for vs code
         local env_name="$1"
-        local go_env_base_dir="$USERCACHE/''${env_name}-goenv"
+        if [ ! -e "$USERCACHE" ]; then
+            local go_env_base_dir=".goenv"
+        else
+            local go_env_base_dir="$USERCACHE/''${env_name}-goenv"
+        fi
         local go_bin_dir="''${go_env_base_dir}/bin"
 
         if [[ -z "$env_name" ]]; then
@@ -144,7 +148,6 @@ pkgs.mkShell {
         echo "Current GOBIN:  ''${GOBIN}"
     }
 
-    ensure-goenv $name
 
     function view() {
       # This searches for lines starting with // followed by optional whitespace,
@@ -156,8 +159,8 @@ pkgs.mkShell {
     alias cli="tsx $_CLI_PATH"
   '' + ''
     export PATH=$PWD:$PATH
-    export GOPATH=$PWD/.devenv
-    export GOBIN=$GOPATH/bin
+    #ensure-goenv $name
+    unset TMP TMPDIR TEMP TEMPDIR
     echo-shortcuts ${__curPos.file}
   '';  # join strings with +
 }
