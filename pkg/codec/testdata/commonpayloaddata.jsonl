@@ -1,0 +1,10 @@
+{"time":"2024-06-11 00:20:43.123+00:00","tags":["temperature","humidity"],"temp_c":23.4,"humidity":45.2}
+{"time":"2024-06-12T12:00:00Z","tags":[],"lux":320,"motion_detected":false}
+{"time":"2022-11-06T23:12:47+08:00","tags":["motion", "door_open"],"motion_detected":true,"door_open":true}
+{"time":"2024-06-11 01:21:28+00:00","tags":[],"power_kw":0.512,"voltage_v":220.1}
+{"time":"2023-01-01T00:00:00-05:00","tags":["door_open", "battery_low", "sensor_fault", "presence"],"battery_level":5,"fault_code":"E42"}
+{"time":"2023-03-28 10:40:00.0+00:00","tags":["fan_on", "presence"],"fan_speed_rpm":1800,"presence":true}
+{"time":"2025-06-12T08:30:45Z","tags":["temperature", "presence"],"temp_c":26.1,"humidity":50}
+{"time":"2024-03-15T17:45:00+01:00","tags":["light"],"lux":820}
+{"time":"2023-11-14 22:13:19.999+00:00","tags":[],"status":"idle","uptime_s":123456}
+{"time":"2024-12-25T00:00:00Z","tags":["power"],"power_kw":1.05,"load_percent":75}
