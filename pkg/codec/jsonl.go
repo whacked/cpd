@@ -1,14 +1,23 @@
 package codec
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
+	"unicode"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/GitRowin/orderedmapjson"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/whacked/yamdb/pkg/internal"
+	"github.com/whacked/yamdb/pkg/io/yamlutil"
 	"github.com/whacked/yamdb/pkg/types"
 )
 
@@ -579,4 +588,252 @@ func (p *JSONLProcessor) ToExpandedJSONL(expandAndCarrySpecialFields bool) strin
 	}
 
 	return jsonl.String()
+}
+
+func parseNextScalarAsTimestamp(r *bufio.Reader) (float64, error) {
+	var token strings.Builder
+	inQuotes := false
+
+	for {
+		ch, err := r.ReadByte()
+		if err != nil {
+			break
+		}
+		if ch == '"' {
+			inQuotes = !inQuotes
+			token.WriteByte(ch)
+		} else if ch == ',' && !inQuotes {
+			r.UnreadByte()
+			break
+		} else {
+			token.WriteByte(ch)
+		}
+	}
+
+	s := strings.TrimSpace(token.String())
+
+	// Case 1: quoted string timestamp
+	if strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"") {
+		str := strings.Trim(s, "\"")
+
+		// Try parsing with Go's default date layouts
+		layouts := []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02 15:04:05.999999999Z07:00", // common ISO-like format
+		}
+
+		for _, layout := range layouts {
+			if t, err := time.Parse(layout, str); err == nil {
+				return float64(t.UnixNano()) / 1e9, nil
+			}
+		}
+		return 0, fmt.Errorf("unrecognized timestamp format: %s", str)
+	}
+
+	// Case 2: numeric timestamp (e.g. 1718065243.123)
+	return strconv.ParseFloat(s, 64)
+}
+
+func parseNextArrayOfIntsOrNull(r *bufio.Reader) ([]int, error) {
+	// Skip any whitespace
+	for {
+		ch, err := r.Peek(1)
+		if err != nil {
+			return nil, err
+		}
+		if !unicode.IsSpace(rune(ch[0])) {
+			break
+		}
+		r.ReadByte()
+	}
+
+	// Check for null
+	ch, err := r.Peek(1)
+	if err != nil {
+		return nil, err
+	}
+
+	if ch[0] == 'n' {
+		// read "null"
+		buf := make([]byte, 4)
+		if _, err := r.Read(buf); err != nil || string(buf) != "null" {
+			return nil, fmt.Errorf("invalid null literal")
+		}
+		return []int{}, nil
+	}
+
+	if ch[0] != '[' {
+		return nil, fmt.Errorf("expected '[' or 'null'")
+	}
+
+	// Consume opening bracket
+	r.ReadByte()
+
+	// Skip whitespace after [
+	for {
+		ch, err := r.Peek(1)
+		if err != nil {
+			return nil, err
+		}
+		if !unicode.IsSpace(rune(ch[0])) {
+			break
+		}
+		r.ReadByte()
+	}
+
+	// Check for empty array
+	ch, _ = r.Peek(1)
+	if ch[0] == ']' {
+		r.ReadByte()
+		return []int{}, nil
+	}
+
+	var nums []int
+	for {
+		// Skip whitespace
+		for {
+			ch, err := r.Peek(1)
+			if err != nil {
+				return nil, err
+			}
+			if !unicode.IsSpace(rune(ch[0])) {
+				break
+			}
+			r.ReadByte()
+		}
+
+		// Check for end of array
+		ch, _ = r.Peek(1)
+		if ch[0] == ']' {
+			r.ReadByte()
+			break
+		}
+
+		// If not first number, expect comma
+		if len(nums) > 0 {
+			ch, _ = r.Peek(1)
+			if ch[0] != ',' {
+				return nil, fmt.Errorf("expected comma between array elements")
+			}
+			r.ReadByte()
+
+			// Skip whitespace after comma
+			for {
+				ch, err := r.Peek(1)
+				if err != nil {
+					return nil, err
+				}
+				if !unicode.IsSpace(rune(ch[0])) {
+					break
+				}
+				r.ReadByte()
+			}
+		}
+
+		// Parse number
+		var numStr strings.Builder
+		for {
+			ch, err := r.Peek(1)
+			if err != nil {
+				return nil, err
+			}
+			if !unicode.IsDigit(rune(ch[0])) && ch[0] != '-' {
+				break
+			}
+			numStr.WriteByte(ch[0])
+			r.ReadByte()
+		}
+
+		if numStr.Len() == 0 {
+			return nil, fmt.Errorf("expected integer")
+		}
+
+		num, err := strconv.Atoi(numStr.String())
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer: %w", err)
+		}
+
+		nums = append(nums, num)
+	}
+
+	sort.Ints(nums)
+	return nums, nil
+}
+
+func consumeComma(r *bufio.Reader) error {
+	ch, err := r.ReadByte()
+	if err != nil {
+		return err
+	}
+	if ch != ',' {
+		return fmt.Errorf("expected comma, got %q", ch)
+	}
+	return nil
+}
+
+func JSONLToCommonPayloadData(line string) (*types.CommonPayloadData, error) {
+	line = strings.TrimSpace(line)
+
+	if !strings.HasPrefix(line, "[") || !strings.HasSuffix(line, "]") {
+		return nil, fmt.Errorf("line must be a JSON array")
+	}
+
+	// Strip outer brackets
+	inner := strings.TrimPrefix(strings.TrimSuffix(line, "]"), "[")
+
+	// Setup scanner
+	r := bufio.NewReader(strings.NewReader(inner))
+
+	// --- Parse Timestamp (float or string) ---
+	timestamp, err := parseNextScalarAsTimestamp(r)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timestamp: %w", err)
+	}
+
+	// Expect comma
+	if err := consumeComma(r); err != nil {
+		return nil, fmt.Errorf("expected comma after timestamp: %w", err)
+	}
+
+	// --- Parse Tags (null or [int,...]) ---
+	tags, err := parseNextArrayOfIntsOrNull(r)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tags: %w", err)
+	}
+
+	// Expect comma
+	if err := consumeComma(r); err != nil {
+		return nil, fmt.Errorf("expected comma after tags: %w", err)
+	}
+
+	// --- Read remaining bytes as object ---
+	payloadBytes, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read payload object: %w", err)
+	}
+	payloadStr := strings.TrimSpace(string(payloadBytes))
+
+	if !strings.HasPrefix(payloadStr, "{") || !strings.HasSuffix(payloadStr, "}") {
+		return nil, fmt.Errorf("payload must be JSON object")
+	}
+
+	// Parse the payload object using YAML node parser to preserve order
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte(payloadStr), &node); err != nil {
+		return nil, fmt.Errorf("failed to parse payload object: %w", err)
+	}
+
+	// Convert the YAML node to an ordered map
+	payload := orderedmapjson.NewAnyOrderedMap()
+	if err := yamlutil.ConvertNodeToOrderedMap(&node, payload); err != nil {
+		return nil, fmt.Errorf("failed to convert payload to ordered map: %w", err)
+	}
+
+	fmt.Printf(">>> tags: %+v\n", tags)
+	return &types.CommonPayloadData{
+		Timestamp: timestamp,
+		Tags:      tags,
+		Payload:   payload,
+	}, nil
 }

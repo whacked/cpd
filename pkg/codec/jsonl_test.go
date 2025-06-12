@@ -7,6 +7,7 @@ import (
 
 	"github.com/GitRowin/orderedmapjson"
 	"github.com/stretchr/testify/assert"
+	"github.com/whacked/yamdb/pkg/types"
 )
 
 func TestJSONLIngestion(t *testing.T) {
@@ -194,4 +195,92 @@ func TestRoundTripConversion(t *testing.T) {
 	// TODO: Add YAML conversion test
 	// TODO: Add JSONL reconstruction test
 	// TODO: Verify structural identity
+}
+
+func TestJSONLToCommonPayloadData(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    *types.CommonPayloadData
+		wantErr bool
+	}{
+		{
+			name:  "valid payload",
+			input: `[1718065243.123, [6,23,3], {event: "boot", name: "sensor-42"}]`,
+			want: &types.CommonPayloadData{
+				Timestamp: 1718065243.123,
+				Tags:      []int{3, 6, 23},
+				Payload: func() *orderedmapjson.AnyOrderedMap {
+					m := orderedmapjson.NewAnyOrderedMap()
+					m.Set("event", "boot")
+					m.Set("name", "sensor-42")
+					return m
+				}(),
+			},
+			wantErr: false,
+		},
+		{
+			name:    "invalid array length (no payload)",
+			input:   `[1718065243.123, [3,6,23]]`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid timestamp type",
+			input:   `["not-a-number", [3,6,23], {event: "boot"}]`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid tags type",
+			input:   `[1718065243.123, "not-an-array", {event: "boot"}]`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid tag value",
+			input:   `[1718065243.123, [2, "not-a-number", 99], {event: "boot"}]`,
+			wantErr: true,
+		},
+		{
+			name:  "null payload",
+			input: `[1718065243.123, [3,6,23], null]`,
+			want: &types.CommonPayloadData{
+				Timestamp: 1718065243.123,
+				Tags:      []int{3, 6, 23},
+				Payload:   nil,
+			},
+			wantErr: true,
+		},
+		{
+			name:  "empty categories",
+			input: `[1718065243.123, [], {event: "boot"}]`,
+			want: &types.CommonPayloadData{
+				Timestamp: 1718065243.123,
+				Tags:      []int{},
+				Payload: func() *orderedmapjson.AnyOrderedMap {
+					m := orderedmapjson.NewAnyOrderedMap()
+					m.Set("event", "boot")
+					return m
+				}(),
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := JSONLToCommonPayloadData(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("JSONLToCommonPayloadData() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				assert.Equal(t, tt.want.Timestamp, got.Timestamp)
+				assert.Equal(t, tt.want.Tags, got.Tags)
+				if tt.want.Payload == nil {
+					assert.Nil(t, got.Payload)
+				} else {
+					assert.Equal(t, tt.want.Payload.String(), got.Payload.String())
+				}
+			}
+		})
+	}
 }

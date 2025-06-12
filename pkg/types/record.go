@@ -1,5 +1,7 @@
 package types
 
+import "github.com/GitRowin/orderedmapjson"
+
 // Record represents a single row of data as a map of field names to values
 type Record map[string]interface{}
 
@@ -79,4 +81,10 @@ type RecordGroup struct {
 	Columns    []ColumnInfo
 	Records    []ValuesWithColumns
 	StartIndex int
+}
+
+type CommonPayloadData struct {
+	Timestamp float64
+	Tags      []int
+	Payload   *orderedmapjson.AnyOrderedMap
 }

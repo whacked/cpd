@@ -2,12 +2,13 @@ package jsonl
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/GitRowin/orderedmapjson"
+	"github.com/whacked/yamdb/pkg/io/yamlutil"
+	"gopkg.in/yaml.v3"
 )
 
 // Reader provides a way to read JSONL records from an io.Reader
@@ -50,10 +51,16 @@ func (r *jsonlReader) Read() (*orderedmapjson.AnyOrderedMap, error) {
 			line = line[:idx]
 		}
 
-		// First parse into ordered map to preserve key order
-		var orderedRecord *orderedmapjson.AnyOrderedMap
-		if err := json.Unmarshal([]byte(line), &orderedRecord); err != nil {
+		// Parse into YAML node to preserve order
+		var node yaml.Node
+		if err := yaml.Unmarshal([]byte(line), &node); err != nil {
 			return nil, fmt.Errorf("failed to decode record: %w (line: %q)", err, line)
+		}
+
+		// Convert to ordered map
+		orderedRecord := orderedmapjson.NewAnyOrderedMap()
+		if err := yamlutil.ConvertNodeToOrderedMap(&node, orderedRecord); err != nil {
+			return nil, fmt.Errorf("failed to convert record to ordered map: %w", err)
 		}
 
 		return orderedRecord, nil
