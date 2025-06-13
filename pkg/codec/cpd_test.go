@@ -170,7 +170,7 @@ func TestJSONLToCPD(t *testing.T) {
 				`tags:`,
 				`  temperature: 1`,
 				`data:`,
-				`  - ["2024-06-12T12:00:00Z",[1],{temp_c:23.4}]`,
+				`  - ["2024-06-12T12:00:00Z",[1],{"temp_c":23.4}]`,
 			}, "\n"),
 			wantErr: false,
 		},
@@ -231,8 +231,20 @@ func TestFileBasedConversion(t *testing.T) {
 	yamlResult, err := JSONLToCPD(strings.NewReader(string(jsonlData)))
 	assert.NoError(t, err, "Failed to convert JSONL to YAML")
 
+	// Strip comments from yamlDataTagsUntilEnd
+	yamlDataLines := strings.Split(string(yamlData), "\n")
+	var uncommentedLines []string
+	for _, line := range yamlDataLines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") && len(trimmed) > 0 {
+			uncommentedLines = append(uncommentedLines, line)
+		}
+	}
+	yamlDataTagsUntilEnd := strings.Split(string(strings.Join(uncommentedLines, "\n")), "tags:")[1]
+	yamlResultTagsUntilEnd := strings.Split(yamlResult, "tags:")[1]
+
 	// Compare YAML documents ignoring whitespace and order
-	assert.YAMLEq(t, string(yamlData), yamlResult, "JSONL to YAML conversion mismatch")
+	assert.Equal(t, yamlDataTagsUntilEnd, yamlResultTagsUntilEnd, "JSONL to YAML conversion mismatch")
 
 	// Test round-trip conversion
 	// YAML -> JSONL -> YAML

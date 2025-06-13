@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -231,7 +230,7 @@ func splitYAMLDocuments(data []byte, atEOF bool) (advance int, token []byte, err
 // JSONLToCPD converts a JSONL file to CPD YAML format
 func JSONLToCPD(r io.Reader) (string, error) {
 	// First pass: collect all unique tags and track version
-	tagSet := make(map[string]struct{})
+	orderedTagCount := orderedmapjson.NewAnyOrderedMap()
 	var currentVersion int
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
@@ -259,7 +258,13 @@ func JSONLToCPD(r io.Reader) (string, error) {
 			if tagArray, ok := tags.([]interface{}); ok {
 				for _, tag := range tagArray {
 					if tagStr, ok := tag.(string); ok {
-						tagSet[tagStr] = struct{}{}
+						// Initialize count to 0 if not present
+						if _, exists := orderedTagCount.Get(tagStr); !exists {
+							orderedTagCount.Set(tagStr, 0)
+						}
+						// Increment count
+						count, _ := orderedTagCount.Get(tagStr)
+						orderedTagCount.Set(tagStr, count.(int)+1)
 					}
 				}
 			}
@@ -268,13 +273,8 @@ func JSONLToCPD(r io.Reader) (string, error) {
 
 	// Create tag lookup table
 	tagMap := make(map[string]int)
-	tagList := make([]string, 0, len(tagSet))
-	for tag := range tagSet {
-		tagList = append(tagList, tag)
-	}
-	sort.Strings(tagList)
-	for i, tag := range tagList {
-		tagMap[tag] = i + 1 // 1-based IDs
+	for el := orderedTagCount.Front(); el != nil; el = el.Next() {
+		tagMap[el.Key] = len(tagMap) + 1 // 1-based IDs
 	}
 
 	// Reset reader for second pass
@@ -358,8 +358,8 @@ func JSONLToCPD(r io.Reader) (string, error) {
 
 	// Add tags section
 	buf.WriteString("tags:\n")
-	for tag, id := range tagMap {
-		buf.WriteString(fmt.Sprintf("  %s: %d\n", tag, id))
+	for el := orderedTagCount.Front(); el != nil; el = el.Next() {
+		buf.WriteString(fmt.Sprintf("  %s: %d\n", el.Key, tagMap[el.Key]))
 	}
 
 	// Add data section in compact format
