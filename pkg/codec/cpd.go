@@ -55,12 +55,11 @@ func customMarshalJSON(v interface{}) ([]byte, error) {
 
 // CPDToJSONL converts a CPD YAML file to JSONL format
 func CPDToJSONL(r io.Reader) (string, error) {
-	// Create a scanner to read multiple YAML documents
 	scanner := bufio.NewScanner(r)
 	scanner.Split(splitYAMLDocuments)
 
 	var jsonl strings.Builder
-	var currentVersion int
+	currentVersion := 0
 	currentMeta := orderedmapjson.NewAnyOrderedMap()
 	currentSchemas := orderedmapjson.NewAnyOrderedMap()
 	currentTags := make(map[int]string)
@@ -71,130 +70,131 @@ func CPDToJSONL(r io.Reader) (string, error) {
 			continue
 		}
 
-		// Parse YAML document
 		var node yaml.Node
 		if err := yaml.Unmarshal([]byte(doc), &node); err != nil {
 			return "", fmt.Errorf("failed to parse YAML document: %w", err)
 		}
 
-		// Extract version if present
 		if versionNode := findNodeByKey(&node, "_version"); versionNode != nil {
 			currentVersion = parseInt(versionNode.Value)
 		}
 
-		// Extract and merge metadata if present
 		if metaNode := findNodeByKey(&node, "_meta"); metaNode != nil {
 			metaMap := orderedmapjson.NewAnyOrderedMap()
 			if err := yamlutil.ConvertNodeToOrderedMap(metaNode, metaMap); err != nil {
-				return "", fmt.Errorf("failed to convert metadata to ordered map: %w", err)
+				return "", fmt.Errorf("failed to convert _meta: %w", err)
 			}
 			RecursiveMergeOrderedMaps(currentMeta, metaMap)
 		}
 
-		// Extract schemas if present
 		if schemasNode := findNodeByKey(&node, "_schemas"); schemasNode != nil {
 			schemasMap := orderedmapjson.NewAnyOrderedMap()
 			if err := yamlutil.ConvertNodeToOrderedMap(schemasNode, schemasMap); err != nil {
-				return "", fmt.Errorf("failed to convert schemas to ordered map: %w", err)
+				return "", fmt.Errorf("failed to convert _schemas: %w", err)
 			}
 			RecursiveMergeOrderedMaps(currentSchemas, schemasMap)
 		}
 
-		// Extract tags lookup table
 		if tagsNode := findNodeByKey(&node, "tags"); tagsNode != nil {
 			for i := 0; i < len(tagsNode.Content); i += 2 {
 				if i+1 >= len(tagsNode.Content) {
 					break
 				}
-				key := tagsNode.Content[i].Value
-				val := tagsNode.Content[i+1].Value
-				currentTags[parseInt(val)] = key
+				name := tagsNode.Content[i].Value
+				id := parseInt(tagsNode.Content[i+1].Value)
+				currentTags[id] = name
 			}
 		}
 
-		// Extract data array
 		dataNode := findNodeByKey(&node, "data")
-		if dataNode == nil {
-			continue // Skip documents without data
-		}
 
-		// Process each row in the data array
+		if dataNode == nil {
+			continue
+		}
 		for _, row := range dataNode.Content {
-			if len(row.Content) != 3 {
-				return "", fmt.Errorf("invalid row format: expected 3 elements")
+			if row.Kind != yaml.SequenceNode || len(row.Content) != 3 {
+				return "", fmt.Errorf("invalid data row: expected 3-element sequence")
 			}
 
-			// Extract components
-			time := row.Content[0].Value
-			tags := row.Content[1].Content
-			payload := row.Content[2]
+			timeStr := row.Content[0].Value
+			tagsNode := row.Content[1]
+			payloadNode := row.Content[2]
 
-			// Convert tags from ints to strings
+			// Decode tags
 			var tagStrings []string
-			for _, tag := range tags {
-				tagID := parseInt(tag.Value)
-				if tagName, ok := currentTags[tagID]; ok {
-					tagStrings = append(tagStrings, tagName)
-				} else {
+			for _, tagNode := range tagsNode.Content {
+				tagID := parseInt(tagNode.Value)
+				tagName, ok := currentTags[tagID]
+				if !ok {
 					return "", fmt.Errorf("unknown tag ID: %d", tagID)
 				}
+				tagStrings = append(tagStrings, tagName)
 			}
 
-			// Create JSONL record with ordered map
-			record := orderedmapjson.NewAnyOrderedMap()
+			// Decode payload, including scalar-form {key: val, ...}
+			var payloadMap *orderedmapjson.AnyOrderedMap
+			switch payloadNode.Kind {
+			case yaml.MappingNode:
+				payloadMap = orderedmapjson.NewAnyOrderedMap()
+				if err := yamlutil.ConvertNodeToOrderedMap(payloadNode, payloadMap); err != nil {
+					return "", fmt.Errorf("failed to decode payload: %w", err)
+				}
+			case yaml.ScalarNode:
+				// Handle scalar inline map: e.g., "{temp_c:23.4,humidity:45.2}"
+				var subNode yaml.Node
+				if err := yaml.Unmarshal([]byte(payloadNode.Value), &subNode); err != nil {
+					return "", fmt.Errorf("invalid scalar payload: %w", err)
+				}
+				if subNode.Kind != yaml.MappingNode {
+					return "", fmt.Errorf("scalar payload not mapping: %q", payloadNode.Value)
+				}
+				payloadMap = orderedmapjson.NewAnyOrderedMap()
+				if err := yamlutil.ConvertNodeToOrderedMap(&subNode, payloadMap); err != nil {
+					return "", fmt.Errorf("failed to decode scalar payload: %w", err)
+				}
+			default:
+				return "", fmt.Errorf("unsupported payload node kind: %v", payloadNode.Kind)
+			}
 
-			// Add version if present
+			record := orderedmapjson.NewAnyOrderedMap()
 			if currentVersion > 0 {
 				record.Set("_version", currentVersion)
 			}
-
-			// Add flattened metadata
 			if currentMeta.Len() > 0 {
-				flattenedMeta := ExpandMetaDataFields(currentMeta, ".")
-				for el := flattenedMeta.Front(); el != nil; el = el.Next() {
+				flat := ExpandMetaDataFields(currentMeta, ".")
+				for el := flat.Front(); el != nil; el = el.Next() {
 					record.Set(el.Key, el.Value)
 				}
 			}
 
-			record.Set("time", time)
-			// Ensure empty slice is marshaled as [] instead of null
+			record.Set("time", timeStr)
 			if len(tagStrings) == 0 {
-				record.Set("tags", make([]string, 0))
+				record.Set("tags", []string{})
 			} else {
 				record.Set("tags", tagStrings)
 			}
 
-			// Convert payload to ordered map preserving order
-			if payload.Kind == yaml.MappingNode {
-				payloadMap := orderedmapjson.NewAnyOrderedMap()
-				if err := yamlutil.ConvertNodeToOrderedMap(payload, payloadMap); err != nil {
-					return "", fmt.Errorf("failed to convert payload to ordered map: %w", err)
-				}
-				// Add payload fields in order
-				for el := payloadMap.Front(); el != nil; el = el.Next() {
-					record.Set(el.Key, el.Value)
-				}
+			for el := payloadMap.Front(); el != nil; el = el.Next() {
+				record.Set(el.Key, el.Value)
 			}
 
-			// Convert to JSONL
+			// Manual JSON construction
 			var recordBuilder strings.Builder
-			recordBuilder.WriteString("{")
-			keyIndex := 0
+			recordBuilder.WriteByte('{')
+			idx := 0
 			for el := record.Front(); el != nil; el = el.Next() {
-				if keyIndex > 0 {
-					recordBuilder.WriteString(",")
+				if idx > 0 {
+					recordBuilder.WriteByte(',')
 				}
-				keyIndex++
-				// Marshal the key
-				keyBytes, _ := json.Marshal(el.Key)
-				recordBuilder.Write(keyBytes)
-				recordBuilder.WriteString(":")
-				// Marshal the value with custom handling
-				valBytes, err := customMarshalJSON(el.Value)
+				idx++
+				keyJSON, _ := json.Marshal(el.Key)
+				valJSON, err := customMarshalJSON(el.Value)
 				if err != nil {
-					return "", fmt.Errorf("failed to marshal value: %w", err)
+					return "", fmt.Errorf("marshal value error: %w", err)
 				}
-				recordBuilder.Write(valBytes)
+				recordBuilder.Write(keyJSON)
+				recordBuilder.WriteByte(':')
+				recordBuilder.Write(valJSON)
 			}
 			recordBuilder.WriteString("}\n")
 			jsonl.WriteString(recordBuilder.String())
@@ -202,9 +202,8 @@ func CPDToJSONL(r io.Reader) (string, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error scanning YAML documents: %w", err)
+		return "", fmt.Errorf("scan error: %w", err)
 	}
-
 	return jsonl.String(), nil
 }
 
@@ -326,7 +325,6 @@ func JSONLToCPD(r io.Reader) (string, error) {
 				}
 			}
 		}
-		sort.Ints(tagIDs)
 
 		// Extract payload (all fields except time and tags)
 		payload := orderedmapjson.NewAnyOrderedMap()
@@ -376,7 +374,15 @@ func JSONLToCPD(r io.Reader) (string, error) {
 		// Format the row as a single line with no extra spaces
 		buf.WriteString("\n  - [")
 		buf.WriteString(fmt.Sprintf("%q,", timeStr))
-		buf.WriteString(fmt.Sprintf("%v,", tags))
+		// Format tags array with proper commas
+		buf.WriteString("[")
+		for i, tag := range tags {
+			if i > 0 {
+				buf.WriteString(",")
+			}
+			buf.WriteString(fmt.Sprintf("%d", tag))
+		}
+		buf.WriteString("],")
 
 		// Convert payload to YAML string with unquoted keys/values where possible
 		var payloadBuilder strings.Builder
@@ -387,14 +393,9 @@ func JSONLToCPD(r io.Reader) (string, error) {
 				payloadBuilder.WriteString(",")
 			}
 			keyIndex++
-			// Format key (unquoted if possible)
-			key := el.Key
-			if needsQuoting(key) {
-				keyBytes, _ := json.Marshal(key)
-				payloadBuilder.Write(keyBytes)
-			} else {
-				payloadBuilder.WriteString(key)
-			}
+			// Always quote keys
+			keyBytes, _ := json.Marshal(el.Key)
+			payloadBuilder.Write(keyBytes)
 			payloadBuilder.WriteString(":")
 			// Format value (unquoted if possible)
 			payloadBuilder.WriteString(formatYAMLValue(el.Value))

@@ -28,9 +28,9 @@ tags:
   humidity: 2
   light: 3
 data:
-  - ["2024-06-11 00:20:43.123+00:00", [1, 2], {temp_c: 23.4, humidity: 45.2}]
+  - ["2024-06-11 00:20:43.123+00:00", [2, 1], {temp_c: 23.4, humidity: 45.2}]
   - ["2024-06-12T12:00:00Z", [], {lux: 320, motion_detected: false}]`,
-			want: `{"time":"2024-06-11 00:20:43.123+00:00","tags":["temperature","humidity"],"temp_c":23.4,"humidity":45.2}
+			want: `{"time":"2024-06-11 00:20:43.123+00:00","tags":["humidity","temperature"],"temp_c":23.4,"humidity":45.2}
 {"time":"2024-06-12T12:00:00Z","tags":[],"lux":320,"motion_detected":false}
 `,
 			wantErr: false,
@@ -162,27 +162,7 @@ func TestJSONLToCPD(t *testing.T) {
 				`{"time":"2024-06-12T12:00:00Z","tags":["temperature"],"temp_c":23.4}`,
 			}, "\n"),
 			want: strings.Join([]string{
-				`_schemas:`,
-				`  data:`,
-				`    type: array`,
-				`    items:`,
-				`      type: array`,
-				`      minItems: 3`,
-				`      maxItems: 3`,
-				`      items:`,
-				`        - type: string  # timestamp`,
-				`          description: "ISO8601 / RFC3339 string"`,
-				`          examples:`,
-				`          - "2024-06-12T12:00:00Z"`,
-				`          - "2022-11-06T23:12:47+08:00"`,
-				`        - type: array   # tags array`,
-				`          items:`,
-				`            type: integer`,
-				`          uniqueItems: true`,
-				`          examples:`,
-				`          - [1, 5, 3299]`,
-				`          - []`,
-				`        - type: object  # payload object`,
+				strings.TrimSpace(CommonPayloadDataSchema),
 				`_columns:`,
 				`  - time`,
 				`  - tags`,
@@ -224,7 +204,7 @@ func TestRoundTrip(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Compare with original
-	assert.Equal(t, input, jsonl)
+	assert.Equal(t, input, strings.TrimSpace(jsonl))
 }
 
 func TestFileBasedConversion(t *testing.T) {
