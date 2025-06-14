@@ -667,9 +667,9 @@ func RunJsonToYamlDemo(filepath string) {
 	fmt.Println(yamlBuilder.String())
 }
 
-func MetaVersionDemo() {
+func MetaVersionDemo(path string) {
 	// Read the meta_version.yaml file
-	source, err := os.ReadFile("pkg/codec/testdata/meta_version.yaml")
+	source, err := os.ReadFile(path)
 	if err != nil {
 		log.Fatalf("Failed to read file: %v", err)
 	}

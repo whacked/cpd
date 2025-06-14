@@ -1,59 +1,52 @@
 package main
 
 import (
+	"flag"
 	"fmt"
-	"log"
 	"os"
-	"strings"
 
 	"github.com/whacked/yamdb/pkg/demos"
-	"gopkg.in/yaml.v3"
+)
+
+const (
+	defaultJsonlPath    = "tests/example-2.jsonl"
+	defaultMetaYamlPath = "pkg/codec/testdata/meta_version.yaml"
 )
 
 func main() {
-	if !false {
+	// Define demo selection flag
+	demoType := flag.String("demo", "", "Demo to run (yaml|jsonl|json2yaml|meta)")
 
+	// Define path flags with defaults
+	jsonlPath := flag.String("jsonl", defaultJsonlPath, "Path to JSONL file")
+	metaYamlPath := flag.String("meta", defaultMetaYamlPath, "Path to meta version YAML file")
+
+	// Parse flags
+	flag.Parse()
+
+	// Validate demo type
+	if *demoType == "" {
+		fmt.Println("Error: -demo flag is required")
+		fmt.Println("Available demos:")
+		fmt.Println("  yaml     - Run YAML demo")
+		fmt.Println("  jsonl    - Run JSONL demo")
+		fmt.Println("  json2yaml - Run JSON to YAML conversion demo")
+		fmt.Println("  meta     - Run meta version demo")
+		os.Exit(1)
+	}
+
+	// Run selected demo
+	switch *demoType {
+	case "yaml":
 		demos.RunYamlDemo()
-		os.Exit(0)
-
-	} else if false {
-		fmt.Println("hello")
-
-		source, err := os.ReadFile("tests/example-1.yaml")
-		if err != nil {
-			fmt.Printf("error reading file: %v\n", err)
-			log.Fatal(err)
-		}
-		var result []map[string]interface{}
-		err = yaml.Unmarshal(source, &result)
-		if err != nil {
-			fmt.Printf("error unmarshalling yaml: %v\n", err)
-			log.Fatal(err)
-		}
-		fmt.Printf("result: %+v\n", result)
-		os.Exit(0)
-
+	case "jsonl":
+		demos.RunJsonlDemo(*jsonlPath, 0)
+	case "json2yaml":
+		demos.RunJsonToYamlDemo(*jsonlPath)
+	case "meta":
+		demos.MetaVersionDemo(*metaYamlPath)
+	default:
+		fmt.Printf("Error: Unknown demo type '%s'\n", *demoType)
+		os.Exit(1)
 	}
-
-	// Get filepath from args or use default
-	filepath := "tests/example-2.jsonl"
-	if len(os.Args) > 1 {
-		lastArg := os.Args[len(os.Args)-1]
-		if strings.HasSuffix(lastArg, ".jsonl") {
-			// Check if file exists
-			if _, err := os.Stat(lastArg); err != nil {
-				fmt.Printf("Error: file %s not found\n", lastArg)
-				os.Exit(1)
-			}
-			filepath = lastArg
-		}
-	}
-
-	if true {
-		demos.RunJsonlDemo(filepath, 0)
-	} else {
-		demos.RunJsonToYamlDemo(filepath)
-	}
-
-	demos.MetaVersionDemo()
 }
