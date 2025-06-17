@@ -1,0 +1,179 @@
+# CommonPayloadData Specification (`2025.06`)
+
+A minimal, diffable, and human-readable YAML format for storing structured, row-oriented data with optional join tables. Designed for forward compatibility, SQLite ingestion, and JSONL round-tripping.
+
+---
+
+## 👉 Overview
+
+A CPD document is a YAML mapping with:
+
+* **Header section** (everything before `data:`)
+* A required \`\` list
+* An optional set of **join tables**
+* A required \`\` array of rows
+* One or more YAML documents separated by `---`
+
+---
+
+## 📌 Header Fields
+
+### 🔹 `_columns:` (required)
+
+Defines the column names for each `data:` row. Length and order must match each row exactly.
+
+```yaml
+_columns: [time, joins, payload]
+```
+
+There are **no required column names**, but the following have **special behavior**:
+
+| Name      | Role                       | Expected Type    |
+| --------- | -------------------------- | ---------------- |
+| `time`    | Timestamp (ISO8601)        | string           |
+| `joins`   | Join data for other tables | array            |
+| `payload` | Opaque key-value map       | mapping / object |
+
+All other column names are treated as **plain scalar fields** (default: `string`).
+
+### 🔹 `_version:` (optional)
+
+Free-form version label (e.g. `"2024.06"`). No semantic effect.
+
+### 🔹 `_meta:` (optional)
+
+Static metadata applied to all rows in the document. Flattened during export.
+
+* `_meta` is **recursively merged** across YAML documents
+* Merging is additive only; no deletion behavior is defined
+
+```yaml
+_meta:
+  source: lab1
+  device:
+    id: xyz
+```
+
+### 🔹 Join Tables (optional)
+
+Any top-level key that:
+
+* Does **not** start with `_`
+* Is **not** `data`
+
+...is interpreted as a join table.
+
+Each join table must be a mapping of `string → integer`.
+
+* Join tables from later YAML documents are **merged** with prior ones by name
+* Merged join tables must remain **bijective** (no duplicate keys or values)
+
+Order of declaration determines column position within `joins` values.
+
+```yaml
+authors:
+  alice: 1
+  bob: 2
+topics:
+  food: 1
+  fitness: 2
+```
+
+---
+
+## 📄 `data:` Section
+
+Required. An array of rows, each row being a sequence matching `_columns:`.
+
+```yaml
+data:
+  - ["2024-06-12T12:00:00Z", [[1, 2], 1], {"note": "test"}]
+```
+
+Each row value:
+
+* Must match `_columns` by position
+* `joins` field (if present) must be an array:
+
+  * Nested array → many-to-many
+  * Integer      → one-to-many
+  * Missing or shorter than declared join tables → treated as null
+  * Empty array → no joins
+
+Note:
+
+* `_columns` **may change** between YAML documents
+* Column reordering across documents is allowed
+
+---
+
+## 🔁 JSONL Representation
+
+During export:
+
+* `joins` are expanded using the join tables
+* `payload` keys are merged into the flat row
+* `_meta` is flattened and merged into each row
+* Output is line-delimited JSON (JSONL)
+
+### Example:
+
+```yaml
+_columns: [time, joins, payload]
+authors:
+  alice: 1
+topics:
+  food: 1
+data:
+  - ["2024-06-12T12:00:00Z", [[1], 1], {"note": "ok"}]
+```
+
+Produces:
+
+```json
+{"time":"2024-06-12T12:00:00Z","authors":["alice"],"topics":"food","note":"ok"}
+```
+
+---
+
+## 🛡️ SQLite Compatibility
+
+All `_columns` become table columns **except** for `joins`, which is used to materialize external join tables.
+
+* `payload` may be stored as JSON blob or flattened
+* Join tables may be expanded into separate SQLite tables
+* All join mappings are deterministic via header-defined tables
+
+### Example:
+
+```sql
+CREATE TABLE data (
+  id INTEGER PRIMARY KEY,
+  time TEXT,
+  payload JSON
+);
+
+CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE data_authors (data_id INTEGER, author_id INTEGER);
+
+CREATE TABLE topics (id INTEGER PRIMARY KEY, name TEXT);
+ALTER TABLE data ADD COLUMN topic_id INTEGER;
+```
+
+---
+
+## ❗ Validation Rules
+
+* `data:` must exist
+* `_columns:` must match each row in length
+* Join tables must be declared in the header and map `string → integer`
+* Join value arrays in `joins` must not exceed join table count
+* Only `string`, `array`, and `object` types are supported in values
+* Across YAML documents:
+
+  * `_meta` and `_version` are recursively propagated and merged
+  * `_columns` and join tables are local to each document, but join tables are merged when redefined
+  * Join table key↔value maps must remain bijective across the merge
+
+---
+
