@@ -53,7 +53,7 @@ func customMarshalJSON(v interface{}) ([]byte, error) {
 }
 
 // CPDToJSONL converts a CPD YAML file to JSONL format
-func CPDToJSONL(r io.Reader) (string, error) {
+func CPDToJSONL_Legacy(r io.Reader) (string, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Split(splitYAMLDocuments)
 
@@ -409,27 +409,6 @@ func JSONLToCPD(r io.Reader) (string, error) {
 }
 
 // Helper functions
-
-func findNodeByKey(node *yaml.Node, key string) *yaml.Node {
-	// If this is a document node, look in its content
-	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
-		return findNodeByKey(node.Content[0], key)
-	}
-
-	// If this is a mapping node, look for the key
-	if node.Kind == yaml.MappingNode {
-		for i := 0; i < len(node.Content); i += 2 {
-			if i+1 >= len(node.Content) {
-				break
-			}
-			if node.Content[i].Value == key {
-				return node.Content[i+1]
-			}
-		}
-	}
-	return nil
-}
-
 func parseInt(s string) int {
 	var i int
 	fmt.Sscanf(s, "%d", &i)

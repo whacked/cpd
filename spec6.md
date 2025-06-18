@@ -1,4 +1,4 @@
-# CommonPayloadData Specification (`2025.06-declarative`)
+# CommonPayloadData Specification (`2024.06-declarative`)
 
 A minimal, declarative, human-readable YAML format for row-oriented structured data with optional join tables. Fully schema-driven. Designed for round-trippable JSONL generation, SQLite compatibility, and toolchain simplicity.
 
@@ -14,14 +14,7 @@ A CPD document is a YAML mapping with:
 * A required **`data:`** array of rows
 * Support for **multi-document YAML**, separated by `---`
 
-Each row is a positional record whose values must match the columns declared in `_columns:`.
-
-* &#x20;list
-* Zero or more **join tables** (must match column names)
-* A required **`data:`** array of rows
-* Support for **multi-document YAML**, separated by `---`
-
-Each row is a positional record whose values must match the columns declared in `_columns:`.
+Each row is a positional record whose values are zipped with `_columns:`. Rows may contain fewer items than `_columns` (trailing columns are omitted). Rows **must not contain more items than columns**.
 
 ---
 
@@ -84,7 +77,10 @@ topic:
 
 ## 📄 `data:` Section
 
-An array of rows, each being a YAML flow-style sequence matching `_columns:` exactly.
+An array of rows, each being a YAML flow-style sequence zipped with `_columns:`.
+
+* Rows may have fewer elements than `_columns:` → trailing columns are skipped
+* Rows **must not have more elements than `_columns:`**
 
 ### Example
 
@@ -97,7 +93,7 @@ topic:
   food: 1
 data:
   - ["2024-06-12T12:00:00Z", [1, 2], 1, {note: "ate natto"}]
-  - ["2024-06-13T13:30:00Z", 1, null, {note: "light snack"}]
+  - ["2024-06-13T13:30:00Z", 1, null]
 ```
 
 ### Per-Field Join Semantics
@@ -154,7 +150,8 @@ Join fields may be expanded into M\:N or 1\:N join tables as needed.
 
 ## ❗ Validation Rules
 
-* `_columns:` must exist and match `data:` row length
+* `_columns:` must exist
+* Each row in `data:` must have **at most** the number of entries in `_columns:`
 * Any column that shares its name with a join table must:
 
   * Use only `int`, `[]`, or `null`
@@ -162,4 +159,6 @@ Join fields may be expanded into M\:N or 1\:N join tables as needed.
 * Join tables must map unique `string → int`
 * `_meta` is recursively and additively merged across documents
 * Join table merges must preserve bijection (no key or ID collisions)
+
+---
 
