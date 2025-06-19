@@ -40,20 +40,23 @@ data:
 				},
 				Data: []*CPDRow{
 					{
-						Values: []interface{}{
-							"2024-06-12T12:00:00Z",
-							[]interface{}{1, 2},
-							1,
-							map[string]interface{}{"note": "ate natto"},
-						},
+						Values: func() *orderedmapjson.AnyOrderedMap {
+							m := orderedmapjson.NewAnyOrderedMap()
+							m.Set("time", "2024-06-12T12:00:00Z")
+							m.Set("authors", []string{"alice", "bob"})
+							m.Set("topic", "food")
+							m.Set("note", "ate natto")
+							return m
+						}(),
 					},
 					{
-						Values: []interface{}{
-							"2024-06-13T13:30:00Z",
-							1,
-							nil,
-							map[string]interface{}{"note": "light snack"},
-						},
+						Values: func() *orderedmapjson.AnyOrderedMap {
+							m := orderedmapjson.NewAnyOrderedMap()
+							m.Set("time", "2024-06-13T13:30:00Z")
+							m.Set("authors", "alice")
+							m.Set("note", "light snack")
+							return m
+						}(),
 					},
 				},
 				Meta:    orderedmapjson.NewAnyOrderedMap(),
@@ -84,10 +87,12 @@ data:
 				},
 				Data: []*CPDRow{
 					{
-						Values: []interface{}{
-							"2024-06-12T12:00:00Z",
-							1,
-						},
+						Values: func() *orderedmapjson.AnyOrderedMap {
+							m := orderedmapjson.NewAnyOrderedMap()
+							m.Set("time", "2024-06-12T12:00:00Z")
+							m.Set("authors", "alice")
+							return m
+						}(),
 					},
 				},
 				Meta:    orderedmapjson.NewAnyOrderedMap(),
