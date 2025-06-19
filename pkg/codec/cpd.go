@@ -189,7 +189,8 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 					names := make([]string, 0, len(val.Content))
 					for _, idNode := range val.Content {
 						if idNode.Tag == "!!null" || idNode.Value == "null" {
-							return nil, fmt.Errorf("invalid join ID in row %d column %s: null in array", j, colName)
+							// Skip null values in array instead of erroring
+							continue
 						}
 						if idNode.Kind != yaml.ScalarNode {
 							return nil, fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", j, colName)
@@ -238,6 +239,11 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 							cpdRow.Values.Set(el.Key, el.Value)
 						}
 					case yaml.ScalarNode:
+						// Check if payload is null - if so, skip it
+						if val.Tag == "!!null" || val.Value == "null" {
+							// Null payload: skip
+							continue
+						}
 						// Try to parse as scalar inline map: e.g., "{temp_c:23.4,humidity:45.2}"
 						var subNode yaml.Node
 						if err := yaml.Unmarshal([]byte(val.Value), &subNode); err != nil {
@@ -287,6 +293,45 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 		var recordBuilder strings.Builder
 		recordBuilder.WriteByte('{')
 		idx := 0
+
+		// Add version if present
+		if d.Version != "" {
+			keyJSON, _ := json.Marshal("_version")
+			// Marshal as number if possible
+			if intVal, err := strconv.Atoi(d.Version); err == nil {
+				valJSON, _ := json.Marshal(intVal)
+				recordBuilder.Write(keyJSON)
+				recordBuilder.WriteByte(':')
+				recordBuilder.Write(valJSON)
+				idx++
+			} else {
+				valJSON, _ := json.Marshal(d.Version)
+				recordBuilder.Write(keyJSON)
+				recordBuilder.WriteByte(':')
+				recordBuilder.Write(valJSON)
+				idx++
+			}
+		}
+
+		// Add metadata if present
+		if d.Meta.Len() > 0 {
+			for el := d.Meta.Front(); el != nil; el = el.Next() {
+				if idx > 0 {
+					recordBuilder.WriteByte(',')
+				}
+				keyJSON, _ := json.Marshal(el.Key)
+				valJSON, err := customMarshalJSON(el.Value)
+				if err != nil {
+					return "", fmt.Errorf("marshal metadata value error: %w", err)
+				}
+				recordBuilder.Write(keyJSON)
+				recordBuilder.WriteByte(':')
+				recordBuilder.Write(valJSON)
+				idx++
+			}
+		}
+
+		// Add row values
 		for el := row.Values.Front(); el != nil; el = el.Next() {
 			if idx > 0 {
 				recordBuilder.WriteByte(',')
@@ -341,6 +386,7 @@ func CPDToJSONL(r io.Reader) (string, error) {
 
 	var documents []*CPDDocument
 	currentVersion := 0
+	hasVersion := false
 	currentMeta := orderedmapjson.NewAnyOrderedMap()
 	currentColumns := []string{}
 	joinTables := make(map[string]map[int]string) // table name -> id -> name
@@ -358,6 +404,7 @@ func CPDToJSONL(r io.Reader) (string, error) {
 
 		// Parse version
 		if versionNode := findNodeByKey(&node, "_version"); versionNode != nil {
+			hasVersion = true
 			currentVersion = parseInt(versionNode.Value)
 		}
 
@@ -478,7 +525,10 @@ func CPDToJSONL(r io.Reader) (string, error) {
 			JoinTables: make(map[string]*JoinTable),
 			Data:       make([]*CPDRow, 0, len(dataNode.Content)),
 			Meta:       orderedmapjson.NewAnyOrderedMap(),
-			Version:    fmt.Sprintf("%d", currentVersion),
+			Version:    "",
+		}
+		if hasVersion {
+			cpdDoc.Version = fmt.Sprintf("%d", currentVersion)
 		}
 		copy(cpdDoc.Columns, currentColumns)
 
@@ -497,9 +547,7 @@ func CPDToJSONL(r io.Reader) (string, error) {
 
 		// Copy metadata
 		if currentMeta.Len() > 0 {
-			for el := currentMeta.Front(); el != nil; el = el.Next() {
-				cpdDoc.Meta.Set(el.Key, el.Value)
-			}
+			flattenMeta("_meta", currentMeta, cpdDoc.Meta)
 		}
 
 		// Parse rows
@@ -536,7 +584,8 @@ func CPDToJSONL(r io.Reader) (string, error) {
 					names := make([]string, 0, len(val.Content))
 					for _, idNode := range val.Content {
 						if idNode.Tag == "!!null" || idNode.Value == "null" {
-							return "", fmt.Errorf("invalid join ID in row %d column %s: null in array", rowIdx, colName)
+							// Skip null values in array instead of erroring
+							continue
 						}
 						if idNode.Kind != yaml.ScalarNode {
 							return "", fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", rowIdx, colName)
@@ -585,6 +634,11 @@ func CPDToJSONL(r io.Reader) (string, error) {
 							cpdRow.Values.Set(el.Key, el.Value)
 						}
 					case yaml.ScalarNode:
+						// Check if payload is null - if so, skip it
+						if val.Tag == "!!null" || val.Value == "null" {
+							// Null payload: skip
+							continue
+						}
 						// Try to parse as scalar inline map: e.g., "{temp_c:23.4,humidity:45.2}"
 						var subNode yaml.Node
 						if err := yaml.Unmarshal([]byte(val.Value), &subNode); err != nil {
@@ -911,4 +965,20 @@ func JSONLToCPD(r io.Reader) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+// Add this helper at the end of the file:
+func flattenMeta(prefix string, v interface{}, out *orderedmapjson.AnyOrderedMap) {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		for k, subv := range val {
+			flattenMeta(prefix+"."+k, subv, out)
+		}
+	case *orderedmapjson.AnyOrderedMap:
+		for el := val.Front(); el != nil; el = el.Next() {
+			flattenMeta(prefix+"."+el.Key, el.Value, out)
+		}
+	default:
+		out.Set(prefix, val)
+	}
 }
