@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 
 // CPDRow represents a single row in the CPD format
 type CPDRow struct {
-	Values []interface{} // Positional values matching _columns
+	Values *orderedmapjson.AnyOrderedMap // Structured values matching _columns
 }
 
 // JoinTable represents a bijective mapping of strings to integers
@@ -107,9 +108,29 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 				}
 				name := value.Content[j].Value
 				idStr := value.Content[j+1].Value
+
+				// Check for empty or whitespace-only keys
+				if strings.TrimSpace(name) == "" {
+					return nil, fmt.Errorf("empty join table key in %s", key)
+				}
+
+				// Check if the value is a quoted string (should be rejected)
+				if value.Content[j+1].Tag == "!!str" {
+					return nil, fmt.Errorf("invalid join table ID in %s: %s (must be integer, not string)", key, idStr)
+				}
 				id, err := strconv.Atoi(idStr)
 				if err != nil {
 					return nil, fmt.Errorf("invalid join table ID in %s: %s", key, idStr)
+				}
+
+				// Check for negative IDs
+				if id < 0 {
+					return nil, fmt.Errorf("invalid join table ID in %s: %d (must be non-negative)", key, id)
+				}
+
+				// Check for too-large IDs
+				if id > math.MaxInt32 {
+					return nil, fmt.Errorf("invalid join table ID in %s: %d (too large)", key, id)
 				}
 
 				// Check bijection
@@ -139,21 +160,105 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 			if rowNode.Kind != yaml.SequenceNode {
 				return nil, fmt.Errorf("data row %d must be a sequence", i)
 			}
-			if len(rowNode.Content) != len(doc.Columns) {
+			if len(rowNode.Content) > len(doc.Columns) {
 				return nil, fmt.Errorf("data row %d length %d does not match columns length %d",
 					i, len(rowNode.Content), len(doc.Columns))
 			}
 
-			row := &CPDRow{
-				Values: make([]interface{}, len(rowNode.Content)),
+			cpdRow := &CPDRow{
+				Values: orderedmapjson.NewAnyOrderedMap(),
 			}
 
+			// Process each column value
 			for j, val := range rowNode.Content {
-				// TODO: Convert value based on column type
-				row.Values[j] = val.Value
+				colName := doc.Columns[j]
+				joinTable, isJoin := doc.JoinTables[colName]
+
+				if isJoin {
+					// Join column: must be int, array of int, or null
+					switch val.Kind {
+					case yaml.ScalarNode:
+						if val.Tag == "!!null" || val.Value == "null" {
+							// Null join: skip
+							continue
+						}
+						id, err := strconv.Atoi(val.Value)
+						if err != nil {
+							return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", i, colName, val.Value)
+						}
+						name, ok := joinTable.IDToName[id]
+						if !ok {
+							return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", i, colName, id)
+						}
+						cpdRow.Values.Set(colName, name)
+					case yaml.SequenceNode:
+						names := make([]string, 0, len(val.Content))
+						for _, idNode := range val.Content {
+							if idNode.Tag == "!!null" || idNode.Value == "null" {
+								return nil, fmt.Errorf("invalid join ID in row %d column %s: null in array", i, colName)
+							}
+							if idNode.Kind != yaml.ScalarNode {
+								return nil, fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", i, colName)
+							}
+							id, err := strconv.Atoi(idNode.Value)
+							if err != nil {
+								return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", i, colName, idNode.Value)
+							}
+							name, ok := joinTable.IDToName[id]
+							if !ok {
+								return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", i, colName, id)
+							}
+							names = append(names, name)
+						}
+						cpdRow.Values.Set(colName, names)
+					default:
+						return nil, fmt.Errorf("invalid join ID in row %d column %s: invalid type", i, colName)
+					}
+				} else if colName == "payload" {
+					// Handle payload specially
+					switch val.Kind {
+					case yaml.MappingNode:
+						payloadMap := orderedmapjson.NewAnyOrderedMap()
+						if err := yamlutil.ConvertNodeToOrderedMap(val, payloadMap); err != nil {
+							return nil, fmt.Errorf("failed to decode payload in row %d: %w", i, err)
+						}
+						// Flatten payload fields into row
+						for el := payloadMap.Front(); el != nil; el = el.Next() {
+							cpdRow.Values.Set(el.Key, el.Value)
+						}
+					case yaml.ScalarNode:
+						// Try to parse as scalar inline map: e.g., "{temp_c:23.4,humidity:45.2}"
+						var subNode yaml.Node
+						if err := yaml.Unmarshal([]byte(val.Value), &subNode); err != nil {
+							// If parsing fails, treat as regular scalar value
+							cpdRow.Values.Set(colName, val.Value)
+							continue
+						}
+						if subNode.Kind != yaml.MappingNode {
+							// If not a mapping, treat as regular scalar value
+							cpdRow.Values.Set(colName, val.Value)
+							continue
+						}
+						payloadMap := orderedmapjson.NewAnyOrderedMap()
+						if err := yamlutil.ConvertNodeToOrderedMap(&subNode, payloadMap); err != nil {
+							// If conversion fails, treat as regular scalar value
+							cpdRow.Values.Set(colName, val.Value)
+							continue
+						}
+						// Flatten payload fields into row
+						for el := payloadMap.Front(); el != nil; el = el.Next() {
+							cpdRow.Values.Set(el.Key, el.Value)
+						}
+					default:
+						return nil, fmt.Errorf("unsupported payload node kind in row %d: %v", i, val.Kind)
+					}
+				} else {
+					// Regular scalar column
+					cpdRow.Values.Set(colName, val.Value)
+				}
 			}
 
-			doc.Data[i] = row
+			doc.Data[i] = cpdRow
 		}
 	} else {
 		return nil, fmt.Errorf("missing required data section")
@@ -164,8 +269,32 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 
 // ToJSONL converts a CPDDocument to JSONL format
 func (d *CPDDocument) ToJSONL() (string, error) {
-	// TODO: Implement
-	return "", nil
+	var jsonl strings.Builder
+
+	for _, row := range d.Data {
+		// Manual JSON construction
+		var recordBuilder strings.Builder
+		recordBuilder.WriteByte('{')
+		idx := 0
+		for el := row.Values.Front(); el != nil; el = el.Next() {
+			if idx > 0 {
+				recordBuilder.WriteByte(',')
+			}
+			idx++
+			keyJSON, _ := json.Marshal(el.Key)
+			valJSON, err := customMarshalJSON(el.Value)
+			if err != nil {
+				return "", fmt.Errorf("marshal value error: %w", err)
+			}
+			recordBuilder.Write(keyJSON)
+			recordBuilder.WriteByte(':')
+			recordBuilder.Write(valJSON)
+		}
+		recordBuilder.WriteString("}\n")
+		jsonl.WriteString(recordBuilder.String())
+	}
+
+	return jsonl.String(), nil
 }
 
 // Validate checks if the CPDDocument is valid according to spec6
@@ -199,7 +328,7 @@ func CPDToJSONL(r io.Reader) (string, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Split(splitYAMLDocuments)
 
-	var jsonl strings.Builder
+	var documents []*CPDDocument
 	currentVersion := 0
 	currentMeta := orderedmapjson.NewAnyOrderedMap()
 	currentColumns := []string{}
@@ -282,14 +411,40 @@ func CPDToJSONL(r io.Reader) (string, error) {
 					}
 					name := value.Content[j].Value
 					idStr := value.Content[j+1].Value
+
+					// Check for empty or whitespace-only keys
+					if strings.TrimSpace(name) == "" {
+						return "", fmt.Errorf("empty join table key in %s", key)
+					}
+
+					// Check if the value is a quoted string (should be rejected)
+					if value.Content[j+1].Tag == "!!str" {
+						return "", fmt.Errorf("invalid join table ID in %s: %s (must be integer, not string)", key, idStr)
+					}
 					id, err := strconv.Atoi(idStr)
 					if err != nil {
 						return "", fmt.Errorf("invalid join table ID in %s: %s", key, idStr)
 					}
 
-					// Check bijection
+					// Check for negative IDs
+					if id < 0 {
+						return "", fmt.Errorf("invalid join table ID in %s: %d (must be non-negative)", key, id)
+					}
+
+					// Check for too-large IDs
+					if id > math.MaxInt32 {
+						return "", fmt.Errorf("invalid join table ID in %s: %d (too large)", key, id)
+					}
+
+					// Check bijection - both ID and name must be unique
 					if existingName, exists := joinTables[key][id]; exists {
 						return "", fmt.Errorf("duplicate ID in join table %s: %d (already maps to %s)", key, id, existingName)
+					}
+					// Check for duplicate names across all IDs
+					for existingID, existingName := range joinTables[key] {
+						if existingName == name {
+							return "", fmt.Errorf("duplicate key in join table %s: %s (already maps to %d)", key, name, existingID)
+						}
 					}
 					joinTables[key][id] = name
 				}
@@ -306,6 +461,37 @@ func CPDToJSONL(r io.Reader) (string, error) {
 			return "", fmt.Errorf("data must be a sequence")
 		}
 
+		// Create CPDDocument for this YAML document
+		cpdDoc := &CPDDocument{
+			Columns:    make([]string, len(currentColumns)),
+			JoinTables: make(map[string]*JoinTable),
+			Data:       make([]*CPDRow, 0, len(dataNode.Content)),
+			Meta:       orderedmapjson.NewAnyOrderedMap(),
+			Version:    fmt.Sprintf("%d", currentVersion),
+		}
+		copy(cpdDoc.Columns, currentColumns)
+
+		// Convert join tables to CPDDocument format
+		for tableName, idToName := range joinTables {
+			joinTable := &JoinTable{
+				NameToID: make(map[string]int),
+				IDToName: make(map[int]string),
+			}
+			for id, name := range idToName {
+				joinTable.NameToID[name] = id
+				joinTable.IDToName[id] = name
+			}
+			cpdDoc.JoinTables[tableName] = joinTable
+		}
+
+		// Copy metadata
+		if currentMeta.Len() > 0 {
+			for el := currentMeta.Front(); el != nil; el = el.Next() {
+				cpdDoc.Meta.Set(el.Key, el.Value)
+			}
+		}
+
+		// Parse rows
 		for rowIdx, row := range dataNode.Content {
 			if row.Kind != yaml.SequenceNode {
 				return "", fmt.Errorf("data row %d must be a sequence", rowIdx)
@@ -317,19 +503,8 @@ func CPDToJSONL(r io.Reader) (string, error) {
 					rowIdx, len(row.Content), len(currentColumns))
 			}
 
-			record := orderedmapjson.NewAnyOrderedMap()
-
-			// Add version if present
-			if currentVersion > 0 {
-				record.Set("_version", currentVersion)
-			}
-
-			// Add flattened metadata
-			if currentMeta.Len() > 0 {
-				flat := ExpandMetaDataFields(currentMeta, ".")
-				for el := flat.Front(); el != nil; el = el.Next() {
-					record.Set(el.Key, el.Value)
-				}
+			cpdRow := &CPDRow{
+				Values: orderedmapjson.NewAnyOrderedMap(),
 			}
 
 			// Process each column value
@@ -353,7 +528,7 @@ func CPDToJSONL(r io.Reader) (string, error) {
 						if !ok {
 							return "", fmt.Errorf("unknown join ID in row %d column %s: %d", rowIdx, colName, id)
 						}
-						record.Set(colName, name)
+						cpdRow.Values.Set(colName, name)
 					case yaml.SequenceNode:
 						names := make([]string, 0, len(val.Content))
 						for _, idNode := range val.Content {
@@ -373,43 +548,73 @@ func CPDToJSONL(r io.Reader) (string, error) {
 							}
 							names = append(names, name)
 						}
-						record.Set(colName, names)
+						cpdRow.Values.Set(colName, names)
 					default:
 						return "", fmt.Errorf("invalid join ID in row %d column %s: invalid type", rowIdx, colName)
 					}
+				} else if colName == "payload" {
+					// Handle payload specially
+					switch val.Kind {
+					case yaml.MappingNode:
+						payloadMap := orderedmapjson.NewAnyOrderedMap()
+						if err := yamlutil.ConvertNodeToOrderedMap(val, payloadMap); err != nil {
+							return "", fmt.Errorf("failed to decode payload in row %d: %w", rowIdx, err)
+						}
+						// Flatten payload fields into row
+						for el := payloadMap.Front(); el != nil; el = el.Next() {
+							cpdRow.Values.Set(el.Key, el.Value)
+						}
+					case yaml.ScalarNode:
+						// Try to parse as scalar inline map: e.g., "{temp_c:23.4,humidity:45.2}"
+						var subNode yaml.Node
+						if err := yaml.Unmarshal([]byte(val.Value), &subNode); err != nil {
+							// If parsing fails, treat as regular scalar value
+							cpdRow.Values.Set(colName, val.Value)
+							continue
+						}
+						if subNode.Kind != yaml.MappingNode {
+							// If not a mapping, treat as regular scalar value
+							cpdRow.Values.Set(colName, val.Value)
+							continue
+						}
+						payloadMap := orderedmapjson.NewAnyOrderedMap()
+						if err := yamlutil.ConvertNodeToOrderedMap(&subNode, payloadMap); err != nil {
+							// If conversion fails, treat as regular scalar value
+							cpdRow.Values.Set(colName, val.Value)
+							continue
+						}
+						// Flatten payload fields into row
+						for el := payloadMap.Front(); el != nil; el = el.Next() {
+							cpdRow.Values.Set(el.Key, el.Value)
+						}
+					default:
+						return "", fmt.Errorf("unsupported payload node kind in row %d: %v", rowIdx, val.Kind)
+					}
 				} else {
-					// Not a join column: accept any value
-					var v interface{}
-					yaml.Unmarshal([]byte(val.Value), &v)
-					record.Set(colName, v)
+					// Regular scalar column
+					cpdRow.Values.Set(colName, val.Value)
 				}
 			}
 
-			// Manual JSON construction
-			var recordBuilder strings.Builder
-			recordBuilder.WriteByte('{')
-			idx := 0
-			for el := record.Front(); el != nil; el = el.Next() {
-				if idx > 0 {
-					recordBuilder.WriteByte(',')
-				}
-				idx++
-				keyJSON, _ := json.Marshal(el.Key)
-				valJSON, err := customMarshalJSON(el.Value)
-				if err != nil {
-					return "", fmt.Errorf("marshal value error in row %d: %w", rowIdx, err)
-				}
-				recordBuilder.Write(keyJSON)
-				recordBuilder.WriteByte(':')
-				recordBuilder.Write(valJSON)
-			}
-			recordBuilder.WriteString("}\n")
-			jsonl.WriteString(recordBuilder.String())
+			cpdDoc.Data = append(cpdDoc.Data, cpdRow)
 		}
+
+		documents = append(documents, cpdDoc)
 	}
 
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("scan error: %w", err)
 	}
+
+	// Emit JSONL from all parsed documents
+	var jsonl strings.Builder
+	for _, doc := range documents {
+		jsonlStr, err := doc.ToJSONL()
+		if err != nil {
+			return "", fmt.Errorf("failed to convert document to JSONL: %w", err)
+		}
+		jsonl.WriteString(jsonlStr)
+	}
+
 	return jsonl.String(), nil
 }
