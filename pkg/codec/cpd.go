@@ -239,32 +239,34 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 							cpdRow.Values.Set(el.Key, el.Value)
 						}
 					case yaml.ScalarNode:
-						// Check if payload is null - if so, skip it
 						if val.Tag == "!!null" || val.Value == "null" {
-							// Null payload: skip
 							continue
 						}
-						// Try to parse as scalar inline map: e.g., "{temp_c:23.4,humidity:45.2}"
-						var subNode yaml.Node
-						if err := yaml.Unmarshal([]byte(val.Value), &subNode); err != nil {
-							// If parsing fails, treat as regular scalar value
+
+						tryVals := []string{val.Value}
+						if len(val.Value) >= 2 && ((val.Value[0] == '"' && val.Value[len(val.Value)-1] == '"') || (val.Value[0] == '\'' && val.Value[len(val.Value)-1] == '\'')) {
+							tryVals = append(tryVals, val.Value[1:len(val.Value)-1])
+						}
+						flattened := false
+						for _, tryVal := range tryVals {
+							trimmed := strings.TrimSpace(tryVal)
+							if len(trimmed) > 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' {
+								// Try parsing as a YAML document
+								var m map[string]interface{}
+								if err := yaml.Unmarshal([]byte(trimmed), &m); err == nil {
+									for k, v := range m {
+										cpdRow.Values.Set(k, v)
+									}
+									flattened = true
+									break
+								}
+							}
+							if flattened {
+								break
+							}
+						}
+						if !flattened {
 							cpdRow.Values.Set(colName, val.Value)
-							continue
-						}
-						if subNode.Kind != yaml.MappingNode {
-							// If not a mapping, treat as regular scalar value
-							cpdRow.Values.Set(colName, val.Value)
-							continue
-						}
-						payloadMap := orderedmapjson.NewAnyOrderedMap()
-						if err := yamlutil.ConvertNodeToOrderedMap(&subNode, payloadMap); err != nil {
-							// If conversion fails, treat as regular scalar value
-							cpdRow.Values.Set(colName, val.Value)
-							continue
-						}
-						// Flatten payload fields into row
-						for el := payloadMap.Front(); el != nil; el = el.Next() {
-							cpdRow.Values.Set(el.Key, el.Value)
 						}
 					default:
 						return nil, fmt.Errorf("unsupported payload node kind in row %d: %v", j, val.Kind)
@@ -634,32 +636,34 @@ func CPDToJSONL(r io.Reader) (string, error) {
 							cpdRow.Values.Set(el.Key, el.Value)
 						}
 					case yaml.ScalarNode:
-						// Check if payload is null - if so, skip it
 						if val.Tag == "!!null" || val.Value == "null" {
-							// Null payload: skip
 							continue
 						}
-						// Try to parse as scalar inline map: e.g., "{temp_c:23.4,humidity:45.2}"
-						var subNode yaml.Node
-						if err := yaml.Unmarshal([]byte(val.Value), &subNode); err != nil {
-							// If parsing fails, treat as regular scalar value
+
+						tryVals := []string{val.Value}
+						if len(val.Value) >= 2 && ((val.Value[0] == '"' && val.Value[len(val.Value)-1] == '"') || (val.Value[0] == '\'' && val.Value[len(val.Value)-1] == '\'')) {
+							tryVals = append(tryVals, val.Value[1:len(val.Value)-1])
+						}
+						flattened := false
+						for _, tryVal := range tryVals {
+							trimmed := strings.TrimSpace(tryVal)
+							if len(trimmed) > 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' {
+								// Try parsing as a YAML document
+								var m map[string]interface{}
+								if err := yaml.Unmarshal([]byte(trimmed), &m); err == nil {
+									for k, v := range m {
+										cpdRow.Values.Set(k, v)
+									}
+									flattened = true
+									break
+								}
+							}
+							if flattened {
+								break
+							}
+						}
+						if !flattened {
 							cpdRow.Values.Set(colName, val.Value)
-							continue
-						}
-						if subNode.Kind != yaml.MappingNode {
-							// If not a mapping, treat as regular scalar value
-							cpdRow.Values.Set(colName, val.Value)
-							continue
-						}
-						payloadMap := orderedmapjson.NewAnyOrderedMap()
-						if err := yamlutil.ConvertNodeToOrderedMap(&subNode, payloadMap); err != nil {
-							// If conversion fails, treat as regular scalar value
-							cpdRow.Values.Set(colName, val.Value)
-							continue
-						}
-						// Flatten payload fields into row
-						for el := payloadMap.Front(); el != nil; el = el.Next() {
-							cpdRow.Values.Set(el.Key, el.Value)
 						}
 					default:
 						return "", fmt.Errorf("unsupported payload node kind in row %d: %v", rowIdx, val.Kind)
