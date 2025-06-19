@@ -171,13 +171,42 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 				Values: orderedmapjson.NewAnyOrderedMap(),
 			}
 
-			// Process each column value
-			for j, val := range rowNode.Content {
+			// Only process up to len(rowNode.Content) columns
+			for j := 0; j < len(rowNode.Content); j++ {
 				colName := doc.Columns[j]
+				val := rowNode.Content[j]
 				joinTable, isJoin := doc.JoinTables[colName]
+				if isJoin && joinTable == nil {
+					return nil, fmt.Errorf("join table not found for column %s", colName)
+				}
 
-				if isJoin {
-					// Join column: must be int, array of int, or null
+				// Check if this is an array value - if so, we need a join table
+				if val.Kind == yaml.SequenceNode {
+					if !isJoin || joinTable == nil {
+						return nil, fmt.Errorf("join table not found for column %s", colName)
+					}
+					// Join column with array: must be array of int, or null
+					names := make([]string, 0, len(val.Content))
+					for _, idNode := range val.Content {
+						if idNode.Tag == "!!null" || idNode.Value == "null" {
+							return nil, fmt.Errorf("invalid join ID in row %d column %s: null in array", j, colName)
+						}
+						if idNode.Kind != yaml.ScalarNode {
+							return nil, fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", j, colName)
+						}
+						id, err := strconv.Atoi(idNode.Value)
+						if err != nil {
+							return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", j, colName, idNode.Value)
+						}
+						name, ok := joinTable.IDToName[id]
+						if !ok {
+							return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", j, colName, id)
+						}
+						names = append(names, name)
+					}
+					cpdRow.Values.Set(colName, names)
+				} else if isJoin && joinTable != nil {
+					// Join column with scalar: must be int or null
 					switch val.Kind {
 					case yaml.ScalarNode:
 						if val.Tag == "!!null" || val.Value == "null" {
@@ -186,35 +215,15 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 						}
 						id, err := strconv.Atoi(val.Value)
 						if err != nil {
-							return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", i, colName, val.Value)
+							return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", j, colName, val.Value)
 						}
 						name, ok := joinTable.IDToName[id]
 						if !ok {
-							return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", i, colName, id)
+							return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", j, colName, id)
 						}
 						cpdRow.Values.Set(colName, name)
-					case yaml.SequenceNode:
-						names := make([]string, 0, len(val.Content))
-						for _, idNode := range val.Content {
-							if idNode.Tag == "!!null" || idNode.Value == "null" {
-								return nil, fmt.Errorf("invalid join ID in row %d column %s: null in array", i, colName)
-							}
-							if idNode.Kind != yaml.ScalarNode {
-								return nil, fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", i, colName)
-							}
-							id, err := strconv.Atoi(idNode.Value)
-							if err != nil {
-								return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", i, colName, idNode.Value)
-							}
-							name, ok := joinTable.IDToName[id]
-							if !ok {
-								return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", i, colName, id)
-							}
-							names = append(names, name)
-						}
-						cpdRow.Values.Set(colName, names)
 					default:
-						return nil, fmt.Errorf("invalid join ID in row %d column %s: invalid type", i, colName)
+						return nil, fmt.Errorf("invalid join ID in row %d column %s: invalid type", j, colName)
 					}
 				} else if colName == "payload" {
 					// Handle payload specially
@@ -222,7 +231,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 					case yaml.MappingNode:
 						payloadMap := orderedmapjson.NewAnyOrderedMap()
 						if err := yamlutil.ConvertNodeToOrderedMap(val, payloadMap); err != nil {
-							return nil, fmt.Errorf("failed to decode payload in row %d: %w", i, err)
+							return nil, fmt.Errorf("failed to decode payload in row %d: %w", j, err)
 						}
 						// Flatten payload fields into row
 						for el := payloadMap.Front(); el != nil; el = el.Next() {
@@ -252,7 +261,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 							cpdRow.Values.Set(el.Key, el.Value)
 						}
 					default:
-						return nil, fmt.Errorf("unsupported payload node kind in row %d: %v", i, val.Kind)
+						return nil, fmt.Errorf("unsupported payload node kind in row %d: %v", j, val.Kind)
 					}
 				} else {
 					// Regular scalar column
@@ -509,13 +518,42 @@ func CPDToJSONL(r io.Reader) (string, error) {
 				Values: orderedmapjson.NewAnyOrderedMap(),
 			}
 
-			// Process each column value
-			for colIdx, val := range row.Content {
+			// Only process up to len(row.Content) columns
+			for colIdx := 0; colIdx < len(row.Content); colIdx++ {
 				colName := currentColumns[colIdx]
+				val := row.Content[colIdx]
 				joinTable, isJoin := joinTables[colName]
+				if isJoin && joinTable == nil {
+					return "", fmt.Errorf("join table not found for column %s", colName)
+				}
 
-				if isJoin {
-					// Join column: must be int, array of int, or null
+				// Check if this is an array value - if so, we need a join table
+				if val.Kind == yaml.SequenceNode {
+					if !isJoin || joinTable == nil {
+						return "", fmt.Errorf("join table not found for column %s", colName)
+					}
+					// Join column with array: must be array of int, or null
+					names := make([]string, 0, len(val.Content))
+					for _, idNode := range val.Content {
+						if idNode.Tag == "!!null" || idNode.Value == "null" {
+							return "", fmt.Errorf("invalid join ID in row %d column %s: null in array", rowIdx, colName)
+						}
+						if idNode.Kind != yaml.ScalarNode {
+							return "", fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", rowIdx, colName)
+						}
+						id, err := strconv.Atoi(idNode.Value)
+						if err != nil {
+							return "", fmt.Errorf("invalid join ID in row %d column %s: %s", rowIdx, colName, idNode.Value)
+						}
+						name, ok := joinTable[id]
+						if !ok {
+							return "", fmt.Errorf("unknown join ID in row %d column %s: %d", rowIdx, colName, id)
+						}
+						names = append(names, name)
+					}
+					cpdRow.Values.Set(colName, names)
+				} else if isJoin && joinTable != nil {
+					// Join column with scalar: must be int or null
 					switch val.Kind {
 					case yaml.ScalarNode:
 						if val.Tag == "!!null" || val.Value == "null" {
@@ -531,26 +569,6 @@ func CPDToJSONL(r io.Reader) (string, error) {
 							return "", fmt.Errorf("unknown join ID in row %d column %s: %d", rowIdx, colName, id)
 						}
 						cpdRow.Values.Set(colName, name)
-					case yaml.SequenceNode:
-						names := make([]string, 0, len(val.Content))
-						for _, idNode := range val.Content {
-							if idNode.Tag == "!!null" || idNode.Value == "null" {
-								return "", fmt.Errorf("invalid join ID in row %d column %s: null in array", rowIdx, colName)
-							}
-							if idNode.Kind != yaml.ScalarNode {
-								return "", fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", rowIdx, colName)
-							}
-							id, err := strconv.Atoi(idNode.Value)
-							if err != nil {
-								return "", fmt.Errorf("invalid join ID in row %d column %s: %s", rowIdx, colName, idNode.Value)
-							}
-							name, ok := joinTable[id]
-							if !ok {
-								return "", fmt.Errorf("unknown join ID in row %d column %s: %d", rowIdx, colName, id)
-							}
-							names = append(names, name)
-						}
-						cpdRow.Values.Set(colName, names)
 					default:
 						return "", fmt.Errorf("invalid join ID in row %d column %s: invalid type", rowIdx, colName)
 					}
