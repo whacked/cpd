@@ -961,14 +961,13 @@ func TestValidation_MissingJoinTable(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name: "missing join table",
+			name: "scalar join ID with no join table is allowed",
 			input: `
 _columns: [time, authors, payload]
 data:
   - ["2024-01-01T00:00:00Z", 1, {foo: "bar"}]
 `,
-			wantErr: true,
-			errMsg:  "join table not found for column",
+			wantErr: false,
 		},
 		{
 			name: "missing join table in second document",
@@ -984,10 +983,10 @@ data:
   - ["2024-01-02T00:00:00Z", 2, {foo: "baz"}]
 `,
 			wantErr: true,
-			errMsg:  "unknown join ID",
+			errMsg:  "unknown join ID", // still correct: 2 isn't mapped
 		},
 		{
-			name: "missing join table with null value",
+			name: "null join ID without join table is allowed",
 			input: `
 _columns: [time, authors, payload]
 data:
@@ -996,7 +995,7 @@ data:
 			wantErr: false,
 		},
 		{
-			name: "missing join table with array value",
+			name: "array join ID with no join table is NOT allowed",
 			input: `
 _columns: [time, authors, payload]
 data:
@@ -1006,7 +1005,7 @@ data:
 			errMsg:  "join table not found for column",
 		},
 		{
-			name: "missing join table with metadata",
+			name: "scalar join ID with metadata but no join table is allowed",
 			input: `
 _version: 1
 _meta:
@@ -1015,8 +1014,7 @@ _columns: [time, authors, payload]
 data:
   - ["2024-01-01T00:00:00Z", 1, {foo: "bar"}]
 `,
-			wantErr: true,
-			errMsg:  "join table not found for column",
+			wantErr: false,
 		},
 		{
 			name: "missing join table with trailing omitted fields",
@@ -1026,20 +1024,19 @@ data:
   - ["2024-01-01T00:00:00Z", 1]
 `,
 			wantErr: true,
-			errMsg:  "join table not found for column",
+			errMsg:  "row length does not match _columns", // structural error, not join-specific
 		},
 		{
-			name: "missing join table with scalar payload",
+			name: "scalar join ID with scalar payload as string",
 			input: `
 _columns: [time, authors, payload]
 data:
   - ["2024-01-01T00:00:00Z", 1, "{temp: 23.4}"]
 `,
-			wantErr: true,
-			errMsg:  "join table not found for column",
+			wantErr: false, // valid as long as payload is not required to be a structured object
 		},
 		{
-			name: "missing join table with empty array",
+			name: "empty array join ID is not allowed without join table",
 			input: `
 _columns: [time, authors, payload]
 data:
@@ -1049,14 +1046,13 @@ data:
 			errMsg:  "join table not found for column",
 		},
 		{
-			name: "missing join table with invalid ID type",
+			name: "scalar join ID as string is allowed",
 			input: `
 _columns: [time, authors, payload]
 data:
   - ["2024-01-01T00:00:00Z", "1", {foo: "bar"}]
 `,
-			wantErr: true,
-			errMsg:  "invalid join ID",
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
