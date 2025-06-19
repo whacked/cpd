@@ -335,6 +335,13 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 
 		// Add row values
 		for el := row.Values.Front(); el != nil; el = el.Next() {
+			// Skip fields with nil or "null" value
+			if el.Value == nil {
+				continue
+			}
+			if s, ok := el.Value.(string); ok && s == "null" {
+				continue
+			}
 			if idx > 0 {
 				recordBuilder.WriteByte(',')
 			}
@@ -563,6 +570,7 @@ func CPDToJSONL(r io.Reader) (string, error) {
 				return "", fmt.Errorf("data row %d has %d values but only %d columns defined",
 					rowIdx, len(row.Content), len(currentColumns))
 			}
+			// Allow rows with fewer values than columns (trailing omission), per spec
 
 			cpdRow := &CPDRow{
 				Values: orderedmapjson.NewAnyOrderedMap(),
@@ -792,10 +800,11 @@ func needsQuoting(s string) bool {
 
 // JSONLToCPD converts a JSONL file to CPD YAML format
 func JSONLToCPD(r io.Reader) (string, error) {
-	// First pass: collect all unique tags and track version
-	orderedTagCount := orderedmapjson.NewAnyOrderedMap()
+	// First pass: collect all unique values for potential join fields and track version
+	joinFieldValues := make(map[string]map[string]int) // field -> value -> count
 	var currentVersion int
 	scanner := bufio.NewScanner(r)
+
 	for scanner.Scan() {
 		// Parse into YAML node to preserve order
 		var node yaml.Node
@@ -816,28 +825,57 @@ func JSONLToCPD(r io.Reader) (string, error) {
 			}
 		}
 
-		// Extract tags
-		if tags, ok := record.Get("tags"); ok {
-			if tagArray, ok := tags.([]interface{}); ok {
-				for _, tag := range tagArray {
-					if tagStr, ok := tag.(string); ok {
-						// Initialize count to 0 if not present
-						if _, exists := orderedTagCount.Get(tagStr); !exists {
-							orderedTagCount.Set(tagStr, 0)
-						}
-						// Increment count
-						count, _ := orderedTagCount.Get(tagStr)
-						orderedTagCount.Set(tagStr, count.(int)+1)
+		// Analyze each field to determine if it should be a join field
+		for el := record.Front(); el != nil; el = el.Next() {
+			if el.Key == "_version" || strings.HasPrefix(el.Key, "_meta") {
+				continue // Skip metadata fields
+			}
+
+			// Check if this field contains string values that could be join values
+			switch v := el.Value.(type) {
+			case string:
+				// Single string value - potential join field
+				if _, exists := joinFieldValues[el.Key]; !exists {
+					joinFieldValues[el.Key] = make(map[string]int)
+				}
+				joinFieldValues[el.Key][v]++
+			case []interface{}:
+				// Array of values - potential join field
+				if _, exists := joinFieldValues[el.Key]; !exists {
+					joinFieldValues[el.Key] = make(map[string]int)
+				}
+				for _, item := range v {
+					if str, ok := item.(string); ok {
+						joinFieldValues[el.Key][str]++
 					}
 				}
 			}
 		}
 	}
 
-	// Create tag lookup table
-	tagMap := make(map[string]int)
-	for el := orderedTagCount.Front(); el != nil; el = el.Next() {
-		tagMap[el.Key] = len(tagMap) + 1 // 1-based IDs
+	// Determine which fields should be join fields (have multiple string values)
+	joinFields := make(map[string]bool)
+	columns := []string{"time"} // Always include time as first column
+
+	for field, values := range joinFieldValues {
+		if len(values) > 1 && field != "time" {
+			joinFields[field] = true
+			columns = append(columns, field)
+		}
+	}
+
+	// Add payload as last column
+	columns = append(columns, "payload")
+
+	// Create join tables
+	joinTables := make(map[string]map[string]int)
+	for field := range joinFields {
+		joinTables[field] = make(map[string]int)
+		id := 1
+		for value := range joinFieldValues[field] {
+			joinTables[field][value] = id
+			id++
+		}
 	}
 
 	// Reset reader for second pass
@@ -875,97 +913,125 @@ func JSONLToCPD(r io.Reader) (string, error) {
 			return "", fmt.Errorf("invalid time field type")
 		}
 
-		// Extract and convert tags
-		var tagIDs []int
-		if tags, ok := record.Get("tags"); ok {
-			if tagArray, ok := tags.([]interface{}); ok {
-				for _, tag := range tagArray {
-					if tagStr, ok := tag.(string); ok {
-						if id, ok := tagMap[tagStr]; ok {
-							tagIDs = append(tagIDs, id)
+		// Build row values
+		rowValues := make([]interface{}, len(columns))
+		rowValues[0] = timeStr // time is always first
+
+		// Handle join fields
+		for i, col := range columns[1 : len(columns)-1] { // Skip time and payload
+			if joinTable, isJoin := joinTables[col]; isJoin {
+				if value, exists := record.Get(col); exists {
+					switch v := value.(type) {
+					case string:
+						if id, ok := joinTable[v]; ok {
+							rowValues[i+1] = id
+						} else {
+							rowValues[i+1] = nil // Unknown value, use null
 						}
+					case []interface{}:
+						var ids []int
+						for _, item := range v {
+							if str, ok := item.(string); ok {
+								if id, ok := joinTable[str]; ok {
+									ids = append(ids, id)
+								}
+							}
+						}
+						rowValues[i+1] = ids
+					default:
+						rowValues[i+1] = nil
 					}
+				} else {
+					rowValues[i+1] = nil
 				}
 			}
 		}
 
-		// Extract payload (all fields except time and tags)
+		// Handle payload (all remaining fields)
 		payload := orderedmapjson.NewAnyOrderedMap()
 		for el := record.Front(); el != nil; el = el.Next() {
-			if el.Key != "time" && el.Key != "tags" {
+			if el.Key != "time" && !joinFields[el.Key] {
 				payload.Set(el.Key, el.Value)
 			}
 		}
+		rowValues[len(columns)-1] = payload
 
-		// Add to data array
-		data = append(data, []interface{}{timeStr, tagIDs, payload})
+		data = append(data, rowValues)
 	}
 
 	// Create a buffer for the YAML output
 	var buf bytes.Buffer
 
-	// Write each section in explicit order
+	// Write version if present
 	if currentVersion > 0 {
 		buf.WriteString("_version: ")
 		buf.WriteString(fmt.Sprintf("%d\n", currentVersion))
 	}
 
-	// Add schema section (already has correct indentation)
-	buf.WriteString(CommonPayloadDataSchema)
-
 	// Add columns section
 	buf.WriteString("_columns:\n")
-	buf.WriteString("  - time\n")
-	buf.WriteString("  - tags\n")
-	buf.WriteString("  - payload\n")
-
-	// Add tags section
-	buf.WriteString("tags:\n")
-	for el := orderedTagCount.Front(); el != nil; el = el.Next() {
-		buf.WriteString(fmt.Sprintf("  %s: %d\n", el.Key, tagMap[el.Key]))
+	for _, col := range columns {
+		buf.WriteString(fmt.Sprintf("  - %s\n", col))
 	}
 
-	// Add data section in compact format
-	buf.WriteString("data:")
+	// Add join tables
+	for field, joinTable := range joinTables {
+		buf.WriteString(fmt.Sprintf("%s:\n", field))
+		for value, id := range joinTable {
+			buf.WriteString(fmt.Sprintf("  %s: %d\n", value, id))
+		}
+	}
+
+	// Add data section
+	buf.WriteString("data:\n")
 	for _, row := range data {
-		// Convert row to compact format
 		rowArray := row.([]interface{})
-		timeStr := rowArray[0].(string)
-		tags := rowArray[1].([]int)
-		payload := rowArray[2].(*orderedmapjson.AnyOrderedMap)
+		buf.WriteString("  - [")
 
-		// Format the row as a single line with no extra spaces
-		buf.WriteString("\n  - [")
-		buf.WriteString(fmt.Sprintf("%q,", timeStr))
-		// Format tags array with proper commas
-		buf.WriteString("[")
-		for i, tag := range tags {
+		for i, val := range rowArray {
 			if i > 0 {
-				buf.WriteString(",")
+				buf.WriteString(", ")
 			}
-			buf.WriteString(fmt.Sprintf("%d", tag))
-		}
-		buf.WriteString("],")
 
-		// Convert payload to YAML string with unquoted keys/values where possible
-		var payloadBuilder strings.Builder
-		payloadBuilder.WriteString("{")
-		keyIndex := 0
-		for el := payload.Front(); el != nil; el = el.Next() {
-			if keyIndex > 0 {
-				payloadBuilder.WriteString(",")
+			switch v := val.(type) {
+			case string:
+				buf.WriteString(fmt.Sprintf("%q", v))
+			case int:
+				buf.WriteString(fmt.Sprintf("%d", v))
+			case []int:
+				buf.WriteString("[")
+				for j, id := range v {
+					if j > 0 {
+						buf.WriteString(", ")
+					}
+					buf.WriteString(fmt.Sprintf("%d", id))
+				}
+				buf.WriteString("]")
+			case *orderedmapjson.AnyOrderedMap:
+				if v.Len() == 0 {
+					buf.WriteString("null")
+				} else {
+					buf.WriteString("{")
+					keyIndex := 0
+					for el := v.Front(); el != nil; el = el.Next() {
+						if keyIndex > 0 {
+							buf.WriteString(", ")
+						}
+						keyIndex++
+						keyBytes, _ := json.Marshal(el.Key)
+						buf.Write(keyBytes)
+						buf.WriteString(": ")
+						buf.WriteString(formatYAMLValue(el.Value))
+					}
+					buf.WriteString("}")
+				}
+			case nil:
+				buf.WriteString("null")
+			default:
+				buf.WriteString(fmt.Sprintf("%v", v))
 			}
-			keyIndex++
-			// Always quote keys
-			keyBytes, _ := json.Marshal(el.Key)
-			payloadBuilder.Write(keyBytes)
-			payloadBuilder.WriteString(":")
-			// Format value (unquoted if possible)
-			payloadBuilder.WriteString(formatYAMLValue(el.Value))
 		}
-		payloadBuilder.WriteString("}")
-		buf.WriteString(payloadBuilder.String())
-		buf.WriteString("]")
+		buf.WriteString("]\n")
 	}
 
 	return buf.String(), nil

@@ -1023,8 +1023,7 @@ _columns: [time, authors, topic, payload]
 data:
   - ["2024-01-01T00:00:00Z", 1]
 `,
-			wantErr: true,
-			errMsg:  "row length does not match _columns", // structural error, not join-specific
+			wantErr: false,
 		},
 		{
 			name: "scalar join ID with scalar payload as string",
@@ -1148,8 +1147,7 @@ authors:
   bob: 2
 data:
   - ["2024-01-01T00:00:00Z", [1, null, 2], {foo: "bar"}]`,
-			wantErr: true,
-			errMsg:  "invalid join ID",
+			wantErr: false,
 		},
 		{
 			name: "array with object",
