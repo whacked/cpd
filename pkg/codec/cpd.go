@@ -371,6 +371,15 @@ func (d *CPDDocument) Validate() error {
 	return nil
 }
 
+func (d *CPDDocument) PrettyPrint() {
+	fmt.Println("<CPDDocument>")
+	fmt.Printf("  Version: %s\n", d.Version)
+	fmt.Printf("  Meta: %+v\n", d.Meta)
+	fmt.Printf("  Columns: %+v\n", d.Columns)
+	fmt.Printf("  JoinTables: %+v\n", d.JoinTables)
+	fmt.Println("</CPDDocument>")
+}
+
 func findNodeByKey(node *yaml.Node, key string) *yaml.Node {
 	// If this is a document node, look in its content
 	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
