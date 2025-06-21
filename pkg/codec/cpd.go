@@ -34,6 +34,7 @@ type CPDDocument struct {
 	Data       []*CPDRow
 	Meta       *orderedmapjson.AnyOrderedMap
 	Version    string
+	MetaNew    *orderedmapjson.AnyOrderedMap
 }
 
 // ParseCPD parses a CPD YAML document into a CPDDocument
@@ -417,11 +418,9 @@ func CPDToJSONL(r io.Reader) (string, error) {
 		}
 		// Update metadata state - we need to extract the unflattened metadata
 		// from the document's flattened metadata for the next iteration
-		if doc.Meta.Len() > 0 {
-			// Create a new metadata map for the next document
-			currentMeta = orderedmapjson.NewAnyOrderedMap()
-			// Copy the metadata for the next iteration
-			RecursiveMergeOrderedMaps(currentMeta, doc.Meta)
+		if doc.MetaNew != nil && doc.MetaNew.Len() > 0 {
+			// Merge new metadata into currentMeta for the next document
+			RecursiveMergeOrderedMaps(currentMeta, doc.MetaNew)
 		}
 		if doc.Version != "" {
 			currentVersion = doc.Version
@@ -537,13 +536,17 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		if err := yamlutil.ConvertNodeToOrderedMap(metaNode, metaMap); err != nil {
 			return nil, fmt.Errorf("failed to convert _meta: %w", err)
 		}
-		// Merge with previous metadata
+		// Merge previous metadata and new metadata for the current document
+		mergedMeta := orderedmapjson.NewAnyOrderedMap()
 		if prevMeta != nil && prevMeta.Len() > 0 {
-			RecursiveMergeOrderedMaps(metaMap, prevMeta)
+			RecursiveMergeOrderedMaps(mergedMeta, prevMeta)
 		}
-		doc.Meta = metaMap
+		RecursiveMergeOrderedMaps(mergedMeta, metaMap)
+		doc.Meta = mergedMeta
+		doc.MetaNew = mergedMeta // propagate the merged meta for the next doc
 	} else if prevMeta != nil && prevMeta.Len() > 0 {
 		doc.Meta = prevMeta
+		doc.MetaNew = prevMeta
 	}
 	// Columns
 	if columnsNode := findNodeByKey(&node, "_columns"); columnsNode != nil {
@@ -659,7 +662,7 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		if line == "" {
 			continue
 		}
-		row, err := parseDataRow(line, doc.Columns, doc.JoinTables)
+		row, err := parseDataRow(line, doc.Columns, doc.JoinTables, lineIdx)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing data row %d: %w", lineIdx, err)
 		}
@@ -669,7 +672,7 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 }
 
 // parseDataRow parses a single data row line, flattening payload fields
-func parseDataRow(line string, columns []string, joinTables map[string]*JoinTable) (*CPDRow, error) {
+func parseDataRow(line string, columns []string, joinTables map[string]*JoinTable, rowIndex int) (*CPDRow, error) {
 	line = strings.TrimPrefix(line, "- ")
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "[") || !strings.HasSuffix(line, "]") {
@@ -721,7 +724,7 @@ func parseDataRow(line string, columns []string, joinTables map[string]*JoinTabl
 		values = append(values, strings.TrimSpace(current.String()))
 	}
 	if len(values) > len(columns) {
-		return nil, fmt.Errorf("data row has %d values but only %d columns defined", len(values), len(columns))
+		return nil, fmt.Errorf("data row %d has %d values but only %d columns defined", rowIndex, len(values), len(columns))
 	}
 	row := &CPDRow{
 		Values: orderedmapjson.NewAnyOrderedMap(),
@@ -769,10 +772,10 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 	// Handle arrays (for join tables)
 	if strings.HasPrefix(valStr, "[") && strings.HasSuffix(valStr, "]") {
 		if !isJoin {
-			return nil, fmt.Errorf("array value requires join table")
+			return nil, fmt.Errorf("join table not found for column")
 		}
 		if joinTable == nil {
-			return nil, fmt.Errorf("join table is nil for join field")
+			return nil, fmt.Errorf("join table not found for column")
 		}
 
 		inner := strings.TrimPrefix(strings.TrimSuffix(valStr, "]"), "[")

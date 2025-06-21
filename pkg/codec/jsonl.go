@@ -24,10 +24,9 @@ import (
 // RecursiveMerge merges newMap into oldMap, recursively handling nested maps
 func RecursiveMergeOrderedMaps(oldMap *orderedmapjson.AnyOrderedMap, newMap *orderedmapjson.AnyOrderedMap) {
 	for el := newMap.Front(); el != nil; el = el.Next() {
-		// Check if key exists in old map
 		oldVal, exists := oldMap.Get(el.Key)
 		if !exists {
-			// Key doesn't exist, simply add it
+			// Key doesn't exist, simply add it (appended at the end)
 			oldMap.Set(el.Key, el.Value)
 			continue
 		}
@@ -40,7 +39,7 @@ func RecursiveMergeOrderedMaps(oldMap *orderedmapjson.AnyOrderedMap, newMap *ord
 			// Both are maps, recursively merge
 			RecursiveMergeOrderedMaps(oldSubMap, newSubMap)
 		} else {
-			// Different types or not both maps, overwrite with new value
+			// Different types or not both maps, overwrite with new value (but keep key order)
 			oldMap.Set(el.Key, el.Value)
 		}
 	}
@@ -267,7 +266,7 @@ type JSONLProcessor struct {
 	Version   int
 	Schema    interface{}        // Raw JSON Schema object
 	validator *jsonschema.Schema // Cached validator
-	Meta      map[string]interface{}
+	Meta      *orderedmapjson.AnyOrderedMap
 	// Category processors
 	categoryProcessors []CategoryProcessor
 	// Record history for lookback operations
@@ -282,7 +281,7 @@ type JSONLProcessor struct {
 // NewJSONLProcessor creates a new JSONL processor
 func NewJSONLProcessor() *JSONLProcessor {
 	processor := &JSONLProcessor{
-		Meta:           make(map[string]interface{}),
+		Meta:           orderedmapjson.NewAnyOrderedMap(),
 		RecordHistory:  make([]*orderedmapjson.AnyOrderedMap, 0),
 		CurrentIndex:   -1,
 		OrderedColumns: make([]types.ColumnInfo, 0),
@@ -392,6 +391,11 @@ func (p *JSONLProcessor) GetOrderedColumns() []types.ColumnInfo {
 
 // updateOrderedColumns updates the canonical column order with new columns from a record
 func (p *JSONLProcessor) updateOrderedColumns(record *orderedmapjson.AnyOrderedMap) {
+	// Add nil check to prevent panic
+	if record == nil {
+		return
+	}
+
 	// Create a map to track which columns we've already seen
 	seen := make(map[string]bool)
 
@@ -421,6 +425,10 @@ func (p *JSONLProcessor) updateOrderedColumns(record *orderedmapjson.AnyOrderedM
 
 // ProcessRecord processes a single JSONL record
 func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*orderedmapjson.AnyOrderedMap, error) {
+	// Add nil check to prevent panic
+	if record == nil {
+		return nil, fmt.Errorf("record cannot be nil")
+	}
 
 	// Process any category-specific logic
 	if err := p.processCategories(record); err != nil {
@@ -444,17 +452,8 @@ func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*o
 
 const defaultDelimiter = "."
 
-func ExpandMetaDataFields(dataMap *orderedmapjson.AnyOrderedMap, delimiter string) *orderedmapjson.AnyOrderedMap {
-	if delimiter == "" {
-		delimiter = defaultDelimiter
-	}
-
-	result := orderedmapjson.NewAnyOrderedMap()
-	flattenMapRecursive("_meta", dataMap, delimiter, result)
-	return result
-}
-
-func flattenMapRecursive(prefix string, m *orderedmapjson.AnyOrderedMap, delimiter string, out *orderedmapjson.AnyOrderedMap) {
+// flattenMapRecursiveWithOrder flattens the map and records the order of first-seen flattened keys
+func flattenMapRecursiveWithOrder(prefix string, m *orderedmapjson.AnyOrderedMap, delimiter string, out *orderedmapjson.AnyOrderedMap, order *[]string, seen map[string]struct{}) {
 	for el := m.Front(); el != nil; el = el.Next() {
 		key := el.Key
 		val := el.Value
@@ -464,14 +463,28 @@ func flattenMapRecursive(prefix string, m *orderedmapjson.AnyOrderedMap, delimit
 			fullKey = prefix + delimiter + key
 		}
 
-		switch v := val.(type) {
-		case *orderedmapjson.AnyOrderedMap:
-			flattenMapRecursive(fullKey, v, delimiter, out)
-		default:
-			// Preserve primitives and arrays as-is
+		if subMap, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
+			flattenMapRecursiveWithOrder(fullKey, subMap, delimiter, out, order, seen)
+		} else {
 			out.Set(fullKey, val)
+			if _, exists := seen[fullKey]; !exists {
+				*order = append(*order, fullKey)
+				seen[fullKey] = struct{}{}
+			}
 		}
 	}
+}
+
+// ExpandMetaDataFieldsWithOrder flattens the map and returns the flattened map and the order of keys
+func ExpandMetaDataFieldsWithOrder(dataMap *orderedmapjson.AnyOrderedMap, delimiter string) (*orderedmapjson.AnyOrderedMap, []string) {
+	if delimiter == "" {
+		delimiter = defaultDelimiter
+	}
+	result := orderedmapjson.NewAnyOrderedMap()
+	order := []string{}
+	seen := make(map[string]struct{})
+	flattenMapRecursiveWithOrder("_meta", dataMap, delimiter, result, &order, seen)
+	return result, order
 }
 
 // ExpandRecord combines version, schema, and meta data with a record into a single ordered map
@@ -508,8 +521,8 @@ func ExpandRecord(record *orderedmapjson.AnyOrderedMap, version int, schemas, me
 	}
 
 	if meta.Len() > 0 {
-		expandedMeta := ExpandMetaDataFields(meta, ".")
-		for key := range expandedMeta.Keys() {
+		expandedMeta, metaOrder := ExpandMetaDataFieldsWithOrder(meta, ".")
+		for _, key := range metaOrder {
 			val, _ := expandedMeta.Get(key)
 			outputRecord.Set(key, val)
 		}
@@ -836,4 +849,10 @@ func JSONLToCommonPayloadData(line string) (*types.CommonPayloadData, error) {
 		Tags:      tags,
 		Payload:   payload,
 	}, nil
+}
+
+// Legacy compatibility: ExpandMetaDataFields returns only the map
+func ExpandMetaDataFields(dataMap *orderedmapjson.AnyOrderedMap, delimiter string) *orderedmapjson.AnyOrderedMap {
+	m, _ := ExpandMetaDataFieldsWithOrder(dataMap, delimiter)
+	return m
 }
