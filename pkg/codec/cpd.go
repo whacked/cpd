@@ -337,6 +337,8 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 
 		// Add row values
 		for el := row.Values.Front(); el != nil; el = el.Next() {
+
+			/* UH OH... what to do?
 			// Skip fields with nil or "null" value
 			if el.Value == nil {
 				continue
@@ -344,6 +346,7 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 			if s, ok := el.Value.(string); ok && s == "null" {
 				continue
 			}
+			*/
 			if idx > 0 {
 				recordBuilder.WriteByte(',')
 			}

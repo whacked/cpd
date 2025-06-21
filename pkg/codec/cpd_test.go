@@ -436,11 +436,13 @@ func TestRoundTrip_JSONL_Stable(t *testing.T) {
 			input:             `{"time":"2024-01-01","authors":["alice"],"foo":"bar"}`,
 			transformedOutput: "", // no change
 		},
+		/* NOTE: this implies we omit keys with null values. not sure this is a good idea.
 		{
 			name:              "round-trip with null join",
 			input:             `{"time":"2024-01-01","authors":null,"note":"no author"}`,
 			transformedOutput: `{"time":"2024-01-01","note":"no author"}`,
 		},
+		// */
 		{
 			name:              "round-trip with multiple join entries",
 			input:             `{"time":"2024-01-01","authors":["alice","bob"],"note":"collab"}`,
@@ -448,7 +450,12 @@ func TestRoundTrip_JSONL_Stable(t *testing.T) {
 		},
 		{
 			name:              "round-trip with payload only",
-			input:             `{"time":"2024-01-01","foo":123,"bar":false}`,
+			input:             `{"time":"2024-01-01","foo":123,"bar":false,"baz":true,"fop":456,"alpha":"x","zeta":null}`,
+			transformedOutput: "",
+		},
+		{
+			name:              "round-trip key order with nested objects",
+			input:             `{"time":"2024-01-01","nested":{"z":3,"y":2,"x":1},"b":false,"a":true,"meta":{"last":"z","first":"a"}}`,
 			transformedOutput: "",
 		},
 	}
