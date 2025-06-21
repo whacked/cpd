@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -831,16 +832,16 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 		if isJoin {
 			return nil, fmt.Errorf("invalid join ID: %s", valStr)
 		}
-		// Parse as YAML object
-		var obj map[string]interface{}
-		if err := yaml.Unmarshal([]byte(valStr), &obj); err != nil {
+		// Parse as YAML node to preserve order
+		var node yaml.Node
+		if err := yaml.Unmarshal([]byte(valStr), &node); err != nil {
 			return nil, fmt.Errorf("failed to parse object: %w", err)
 		}
 
 		// Convert to ordered map
 		orderedObj := orderedmapjson.NewAnyOrderedMap()
-		for k, v := range obj {
-			orderedObj.Set(k, v)
+		if err := yamlutil.ConvertNodeToOrderedMap(&node, orderedObj); err != nil {
+			return nil, fmt.Errorf("failed to convert object to ordered map: %w", err)
 		}
 		return orderedObj, nil
 	}
@@ -852,15 +853,16 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 		}
 		// Remove the outer quotes and parse as object
 		unquoted := valStr[1 : len(valStr)-1]
-		var obj map[string]interface{}
-		if err := yaml.Unmarshal([]byte(unquoted), &obj); err != nil {
+		// Parse as YAML node to preserve order
+		var node yaml.Node
+		if err := yaml.Unmarshal([]byte(unquoted), &node); err != nil {
 			return nil, fmt.Errorf("failed to parse quoted object: %w", err)
 		}
 
 		// Convert to ordered map
 		orderedObj := orderedmapjson.NewAnyOrderedMap()
-		for k, v := range obj {
-			orderedObj.Set(k, v)
+		if err := yamlutil.ConvertNodeToOrderedMap(&node, orderedObj); err != nil {
+			return nil, fmt.Errorf("failed to convert quoted object to ordered map: %w", err)
 		}
 		return orderedObj, nil
 	}
@@ -1061,12 +1063,21 @@ func JSONLToCPD(r io.Reader) (string, error) {
 	}
 
 	// Determine which fields should be join fields (have multiple string values)
-	joinFields := make(map[string]bool)
+	// Use ordered map to preserve field order
+	joinFields := orderedmapjson.NewAnyOrderedMap()
 	columns := []string{"time"} // Always include time as first column
 
-	for field, values := range joinFieldValues {
+	// Sort field names to ensure deterministic order
+	var fieldNames []string
+	for field := range joinFieldValues {
+		fieldNames = append(fieldNames, field)
+	}
+	sort.Strings(fieldNames)
+
+	for _, field := range fieldNames {
+		values := joinFieldValues[field]
 		if len(values) > 1 && field != "time" {
-			joinFields[field] = true
+			joinFields.Set(field, true)
 			columns = append(columns, field)
 		}
 	}
@@ -1076,10 +1087,17 @@ func JSONLToCPD(r io.Reader) (string, error) {
 
 	// Create join tables
 	joinTables := make(map[string]map[string]int)
-	for field := range joinFields {
+	for el := joinFields.Front(); el != nil; el = el.Next() {
+		field := el.Key
 		joinTables[field] = make(map[string]int)
 		id := 1
+		// Sort values to ensure deterministic order
+		var valueNames []string
 		for value := range joinFieldValues[field] {
+			valueNames = append(valueNames, value)
+		}
+		sort.Strings(valueNames)
+		for _, value := range valueNames {
 			joinTables[field][value] = id
 			id++
 		}
@@ -1154,10 +1172,10 @@ func JSONLToCPD(r io.Reader) (string, error) {
 			}
 		}
 
-		// Handle payload (all remaining fields)
+		// Handle payload (all remaining fields) - preserve original order
 		payload := orderedmapjson.NewAnyOrderedMap()
 		for el := record.Front(); el != nil; el = el.Next() {
-			if el.Key != "time" && !joinFields[el.Key] {
+			if el.Key != "time" && !joinFields.Has(el.Key) {
 				payload.Set(el.Key, el.Value)
 			}
 		}
@@ -1182,9 +1200,18 @@ func JSONLToCPD(r io.Reader) (string, error) {
 	}
 
 	// Add join tables
-	for field, joinTable := range joinTables {
+	for el := joinFields.Front(); el != nil; el = el.Next() {
+		field := el.Key
+		joinTable := joinTables[field]
 		buf.WriteString(fmt.Sprintf("%s:\n", field))
-		for value, id := range joinTable {
+		// Sort values to ensure deterministic order
+		var valueNames []string
+		for value := range joinTable {
+			valueNames = append(valueNames, value)
+		}
+		sort.Strings(valueNames)
+		for _, value := range valueNames {
+			id := joinTable[value]
 			buf.WriteString(fmt.Sprintf("  %s: %d\n", value, id))
 		}
 	}
