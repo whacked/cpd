@@ -33,8 +33,8 @@ type CPDDocument struct {
 	JoinTables map[string]*JoinTable
 	Data       []*CPDRow
 	Meta       *orderedmapjson.AnyOrderedMap
-	Version    string
 	MetaNew    *orderedmapjson.AnyOrderedMap
+	Version    string
 }
 
 // ParseCPD parses a CPD YAML document into a CPDDocument
@@ -317,6 +317,8 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 		}
 
 		// Add flattened metadata if present
+		// Use d.Meta (prevMeta) for all rows in current document
+		// New metadata only appears in the next document
 		if d.Meta != nil && d.Meta.Len() > 0 {
 			flatMeta := orderedmapjson.NewAnyOrderedMap()
 			flattenMeta("_meta", d.Meta, flatMeta)
@@ -425,12 +427,7 @@ func CPDToJSONL(r io.Reader) (string, error) {
 			currentColumns = make([]string, len(doc.Columns))
 			copy(currentColumns, doc.Columns)
 		}
-		// Update metadata state - we need to extract the unflattened metadata
-		// from the document's flattened metadata for the next iteration
-		if doc.MetaNew != nil && doc.MetaNew.Len() > 0 {
-			// Merge new metadata into currentMeta for the next document
-			RecursiveMergeOrderedMaps(currentMeta, doc.MetaNew)
-		}
+		// Update metadata state for the next document
 		if doc.Version != "" {
 			currentVersion = doc.Version
 		}
@@ -458,6 +455,13 @@ func CPDToJSONL(r io.Reader) (string, error) {
 		}
 
 		documents = append(documents, doc)
+
+		// Update currentMeta for the next document after processing this document
+		if doc.MetaNew != nil && doc.MetaNew.Len() > 0 {
+			// Create a new map for the next document with merged metadata
+			currentMeta = orderedmapjson.NewAnyOrderedMap()
+			RecursiveMergeOrderedMaps(currentMeta, doc.MetaNew)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -531,6 +535,7 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		JoinTables: make(map[string]*JoinTable),
 		Data:       []*CPDRow{},
 		Meta:       orderedmapjson.NewAnyOrderedMap(),
+		MetaNew:    orderedmapjson.NewAnyOrderedMap(),
 		Version:    "",
 	}
 	// Version
@@ -545,17 +550,21 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		if err := yamlutil.ConvertNodeToOrderedMap(metaNode, metaMap); err != nil {
 			return nil, fmt.Errorf("failed to convert _meta: %w", err)
 		}
-		// Merge previous metadata and new metadata for the current document
+		// For the current document, use merged metadata (previous + new)
 		mergedMeta := orderedmapjson.NewAnyOrderedMap()
 		if prevMeta != nil && prevMeta.Len() > 0 {
-			RecursiveMergeOrderedMaps(mergedMeta, prevMeta)
+			// Create a deep copy of prevMeta to avoid modifying the original
+			prevMetaCopy := deepCopyOrderedMap(prevMeta)
+			RecursiveMergeOrderedMaps(mergedMeta, prevMetaCopy)
 		}
 		RecursiveMergeOrderedMaps(mergedMeta, metaMap)
-		doc.Meta = mergedMeta
-		doc.MetaNew = mergedMeta // propagate the merged meta for the next doc
+		doc.Meta = mergedMeta    // Use merged metadata for current document
+		doc.MetaNew = mergedMeta // Propagate merged metadata for next document
 	} else if prevMeta != nil && prevMeta.Len() > 0 {
-		doc.Meta = prevMeta
-		doc.MetaNew = prevMeta
+		// Create a deep copy of prevMeta to avoid modifying the original
+		prevMetaCopy := deepCopyOrderedMap(prevMeta)
+		doc.Meta = prevMetaCopy
+		doc.MetaNew = prevMetaCopy
 	}
 	// Columns
 	if columnsNode := findNodeByKey(&node, "_columns"); columnsNode != nil {
@@ -1252,4 +1261,21 @@ func flattenMeta(prefix string, v interface{}, out *orderedmapjson.AnyOrderedMap
 	default:
 		out.Set(prefix, val)
 	}
+}
+
+// deepCopyOrderedMap creates a deep copy of an ordered map
+func deepCopyOrderedMap(src *orderedmapjson.AnyOrderedMap) *orderedmapjson.AnyOrderedMap {
+	if src == nil {
+		return nil
+	}
+	dst := orderedmapjson.NewAnyOrderedMap()
+	for el := src.Front(); el != nil; el = el.Next() {
+		// Deep copy nested maps
+		if subMap, ok := el.Value.(*orderedmapjson.AnyOrderedMap); ok {
+			dst.Set(el.Key, deepCopyOrderedMap(subMap))
+		} else {
+			dst.Set(el.Key, el.Value)
+		}
+	}
+	return dst
 }
