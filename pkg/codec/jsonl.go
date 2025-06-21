@@ -23,6 +23,7 @@ import (
 
 // RecursiveMerge merges newMap into oldMap, recursively handling nested maps
 func RecursiveMergeOrderedMaps(oldMap *orderedmapjson.AnyOrderedMap, newMap *orderedmapjson.AnyOrderedMap) {
+
 	for el := newMap.Front(); el != nil; el = el.Next() {
 		oldVal, exists := oldMap.Get(el.Key)
 		if !exists {
