@@ -787,17 +787,18 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 		var result []string
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
-			if part == "" {
+			if part == "" || part == "null" {
 				continue
 			}
-
-			// Parse as integer ID
-			id, err := strconv.Atoi(part)
-			if err != nil {
+			// Reject nested arrays or objects
+			if strings.HasPrefix(part, "[") || strings.HasPrefix(part, "{") {
 				return nil, fmt.Errorf("invalid join ID: %s", part)
 			}
-
-			// Look up name
+			// Only allow integer IDs
+			if _, err := strconv.Atoi(part); err != nil {
+				return nil, fmt.Errorf("invalid join ID: %s", part)
+			}
+			id, _ := strconv.Atoi(part)
 			if name, exists := joinTable.IDToName[id]; exists {
 				result = append(result, name)
 			} else {
@@ -809,6 +810,9 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 
 	// Handle objects (payload)
 	if strings.HasPrefix(valStr, "{") && strings.HasSuffix(valStr, "}") {
+		if isJoin {
+			return nil, fmt.Errorf("invalid join ID: %s", valStr)
+		}
 		// Parse as YAML object
 		var obj map[string]interface{}
 		if err := yaml.Unmarshal([]byte(valStr), &obj); err != nil {
@@ -825,6 +829,9 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 
 	// Handle quoted object strings (scalar payload)
 	if strings.HasPrefix(valStr, "\"{") && strings.HasSuffix(valStr, "}\"") {
+		if isJoin {
+			return nil, fmt.Errorf("invalid join ID: %s", valStr)
+		}
 		// Remove the outer quotes and parse as object
 		unquoted := valStr[1 : len(valStr)-1]
 		var obj map[string]interface{}
@@ -845,7 +852,17 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 		if joinTable == nil {
 			return nil, fmt.Errorf("join table is nil for join field")
 		}
-		// Parse as integer ID
+		// Reject booleans
+		if valStr == "true" || valStr == "false" {
+			return nil, fmt.Errorf("invalid join ID: %s", valStr)
+		}
+		// Reject floats
+		if strings.Contains(valStr, ".") {
+			if _, err := strconv.ParseFloat(valStr, 64); err == nil {
+				return nil, fmt.Errorf("invalid join ID: %s", valStr)
+			}
+		}
+		// Reject anything that isn't a valid integer
 		id, err := strconv.Atoi(valStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid join ID: %s", valStr)
