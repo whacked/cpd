@@ -315,9 +315,11 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 			}
 		}
 
-		// Add metadata if present
-		if d.Meta.Len() > 0 {
-			for el := d.Meta.Front(); el != nil; el = el.Next() {
+		// Add flattened metadata if present
+		if d.Meta != nil && d.Meta.Len() > 0 {
+			flatMeta := orderedmapjson.NewAnyOrderedMap()
+			flattenMeta("_meta", d.Meta, flatMeta)
+			for el := flatMeta.Front(); el != nil; el = el.Next() {
 				if idx > 0 {
 					recordBuilder.WriteByte(',')
 				}
@@ -391,308 +393,69 @@ func findNodeByKey(node *yaml.Node, key string) *yaml.Node {
 // CPDToJSONL converts a CPD YAML file to JSONL format
 func CPDToJSONL(r io.Reader) (string, error) {
 	scanner := bufio.NewScanner(r)
-	scanner.Split(splitYAMLDocuments)
+	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
 
 	var documents []*CPDDocument
-	currentVersion := 0
-	hasVersion := false
+	currentVersion := ""
 	currentMeta := orderedmapjson.NewAnyOrderedMap()
-	currentColumns := []string{}
-	joinTables := make(map[string]map[int]string) // table name -> id -> name
+	var currentColumns []string
+	currentJoinTables := make(map[string]*JoinTable)
 
-	for scanner.Scan() {
-		doc := scanner.Text()
-		if strings.TrimSpace(doc) == "" {
-			continue
-		}
-
-		var node yaml.Node
-		if err := yaml.Unmarshal([]byte(doc), &node); err != nil {
-			return "", fmt.Errorf("failed to parse YAML document: %w", err)
-		}
-
-		// Parse version
-		if versionNode := findNodeByKey(&node, "_version"); versionNode != nil {
-			hasVersion = true
-			currentVersion = parseInt(versionNode.Value)
-		}
-
-		// Parse meta
-		if metaNode := findNodeByKey(&node, "_meta"); metaNode != nil {
-			metaMap := orderedmapjson.NewAnyOrderedMap()
-			if err := yamlutil.ConvertNodeToOrderedMap(metaNode, metaMap); err != nil {
-				return "", fmt.Errorf("failed to convert _meta: %w", err)
-			}
-			RecursiveMergeOrderedMaps(currentMeta, metaMap)
-		}
-
-		// Parse columns (persist if not present)
-		if columnsNode := findNodeByKey(&node, "_columns"); columnsNode != nil {
-			if columnsNode.Kind != yaml.SequenceNode {
-				return "", fmt.Errorf("_columns must be a sequence")
-			}
-			currentColumns = make([]string, len(columnsNode.Content))
-			for i, col := range columnsNode.Content {
-				currentColumns[i] = col.Value
-			}
-		} else if len(currentColumns) == 0 {
-			return "", fmt.Errorf("missing required _columns")
-		}
-
-		// Parse join tables (persist and extend if not present)
-		for i := 0; i < len(node.Content[0].Content); i += 2 {
-			if i+1 >= len(node.Content[0].Content) {
+	for {
+		doc, err := parseNextDocument(scanner, currentColumns, currentJoinTables, currentMeta, currentVersion)
+		if err != nil {
+			if err == io.EOF {
 				break
 			}
-			key := node.Content[0].Content[i].Value
-			value := node.Content[0].Content[i+1]
+			return "", fmt.Errorf("failed to parse document: %w", err)
+		}
 
-			// Skip special fields and data
-			if strings.HasPrefix(key, "_") || key == "data" {
-				continue
+		// Update state for next document
+		if len(doc.Columns) > 0 {
+			currentColumns = make([]string, len(doc.Columns))
+			copy(currentColumns, doc.Columns)
+		}
+		// Update metadata state - we need to extract the unflattened metadata
+		// from the document's flattened metadata for the next iteration
+		if doc.Meta.Len() > 0 {
+			// Create a new metadata map for the next document
+			currentMeta = orderedmapjson.NewAnyOrderedMap()
+			// Copy the metadata for the next iteration
+			RecursiveMergeOrderedMaps(currentMeta, doc.Meta)
+		}
+		if doc.Version != "" {
+			currentVersion = doc.Version
+		}
+		for k, v := range doc.JoinTables {
+			if v == nil {
+				continue // Skip nil join tables
 			}
-
-			// Check if this is a join table (must be in _columns)
-			isJoinTable := false
-			for _, col := range currentColumns {
-				if col == key {
-					isJoinTable = true
-					break
+			if _, ok := currentJoinTables[k]; !ok {
+				currentJoinTables[k] = &JoinTable{
+					NameToID: make(map[string]int),
+					IDToName: make(map[int]string),
 				}
 			}
-
-			if isJoinTable {
-				if value.Kind != yaml.MappingNode {
-					return "", fmt.Errorf("join table %s must be a mapping", key)
-				}
-
-				// Initialize join table if not exists
-				if _, exists := joinTables[key]; !exists {
-					joinTables[key] = make(map[int]string)
-				}
-
-				// Add entries to join table
-				for j := 0; j < len(value.Content); j += 2 {
-					if j+1 >= len(value.Content) {
-						break
-					}
-					name := value.Content[j].Value
-					idStr := value.Content[j+1].Value
-
-					// Check for empty or whitespace-only keys
-					if strings.TrimSpace(name) == "" {
-						return "", fmt.Errorf("empty join table key in %s", key)
-					}
-
-					// Check if the value is a quoted string (should be rejected)
-					if value.Content[j+1].Tag == "!!str" {
-						return "", fmt.Errorf("invalid join table ID in %s: %s (must be integer, not string)", key, idStr)
-					}
-					id, err := strconv.Atoi(idStr)
-					if err != nil {
-						return "", fmt.Errorf("invalid join table ID in %s: %s", key, idStr)
-					}
-
-					// Check for negative IDs
-					if id < 0 {
-						return "", fmt.Errorf("invalid join table ID in %s: %d (must be non-negative)", key, id)
-					}
-
-					// Check for too-large IDs
-					if id > math.MaxInt32 {
-						return "", fmt.Errorf("invalid join table ID in %s: %d (too large)", key, id)
-					}
-
-					// Check bijection - both ID and name must be unique
-					if existingName, exists := joinTables[key][id]; exists {
-						return "", fmt.Errorf("duplicate ID in join table %s: %d (already maps to %s)", key, id, existingName)
-					}
-					// Check for duplicate names across all IDs
-					for existingID, existingName := range joinTables[key] {
-						if existingName == name {
-							return "", fmt.Errorf("duplicate key in join table %s: %s (already maps to %d)", key, name, existingID)
-						}
-					}
-					joinTables[key][id] = name
+			// Ensure the join table is properly initialized
+			if currentJoinTables[k] == nil {
+				currentJoinTables[k] = &JoinTable{
+					NameToID: make(map[string]int),
+					IDToName: make(map[int]string),
 				}
 			}
-		}
-
-		// Parse data
-		dataNode := findNodeByKey(&node, "data")
-		if dataNode == nil {
-			continue
-		}
-
-		if dataNode.Kind != yaml.SequenceNode {
-			return "", fmt.Errorf("data must be a sequence")
-		}
-
-		// Create CPDDocument for this YAML document
-		cpdDoc := &CPDDocument{
-			Columns:    make([]string, len(currentColumns)),
-			JoinTables: make(map[string]*JoinTable),
-			Data:       make([]*CPDRow, 0, len(dataNode.Content)),
-			Meta:       orderedmapjson.NewAnyOrderedMap(),
-			Version:    "",
-		}
-		if hasVersion {
-			cpdDoc.Version = fmt.Sprintf("%d", currentVersion)
-		}
-		copy(cpdDoc.Columns, currentColumns)
-
-		// Convert join tables to CPDDocument format
-		for tableName, idToName := range joinTables {
-			joinTable := &JoinTable{
-				NameToID: make(map[string]int),
-				IDToName: make(map[int]string),
+			for name, id := range v.NameToID {
+				currentJoinTables[k].NameToID[name] = id
+				currentJoinTables[k].IDToName[id] = name
 			}
-			for id, name := range idToName {
-				joinTable.NameToID[name] = id
-				joinTable.IDToName[id] = name
-			}
-			cpdDoc.JoinTables[tableName] = joinTable
 		}
 
-		// Copy metadata
-		if currentMeta.Len() > 0 {
-			flattenMeta("_meta", currentMeta, cpdDoc.Meta)
-		}
-
-		// Parse rows
-		for rowIdx, row := range dataNode.Content {
-			if row.Kind != yaml.SequenceNode {
-				return "", fmt.Errorf("data row %d must be a sequence", rowIdx)
-			}
-
-			// Validate row length
-			if len(row.Content) > len(currentColumns) {
-				return "", fmt.Errorf("data row %d has %d values but only %d columns defined",
-					rowIdx, len(row.Content), len(currentColumns))
-			}
-			// Allow rows with fewer values than columns (trailing omission), per spec
-
-			cpdRow := &CPDRow{
-				Values: orderedmapjson.NewAnyOrderedMap(),
-			}
-
-			// Only process up to len(row.Content) columns
-			for colIdx := 0; colIdx < len(row.Content); colIdx++ {
-				colName := currentColumns[colIdx]
-				val := row.Content[colIdx]
-				joinTable, isJoin := joinTables[colName]
-				if isJoin && joinTable == nil {
-					return "", fmt.Errorf("join table not found for column %s", colName)
-				}
-
-				// Check if this is an array value - if so, we need a join table
-				if val.Kind == yaml.SequenceNode {
-					if !isJoin || joinTable == nil {
-						return "", fmt.Errorf("join table not found for column %s", colName)
-					}
-					// Join column with array: must be array of int, or null
-					names := make([]string, 0, len(val.Content))
-					for _, idNode := range val.Content {
-						if idNode.Tag == "!!null" || idNode.Value == "null" {
-							// Skip null values in array instead of erroring
-							continue
-						}
-						if idNode.Kind != yaml.ScalarNode {
-							return "", fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", rowIdx, colName)
-						}
-						id, err := strconv.Atoi(idNode.Value)
-						if err != nil {
-							return "", fmt.Errorf("invalid join ID in row %d column %s: %s", rowIdx, colName, idNode.Value)
-						}
-						name, ok := joinTable[id]
-						if !ok {
-							return "", fmt.Errorf("unknown join ID in row %d column %s: %d", rowIdx, colName, id)
-						}
-						names = append(names, name)
-					}
-					cpdRow.Values.Set(colName, names)
-				} else if isJoin && joinTable != nil {
-					// Join column with scalar: must be int or null
-					switch val.Kind {
-					case yaml.ScalarNode:
-						if val.Tag == "!!null" || val.Value == "null" {
-							// Null join: skip
-							continue
-						}
-						id, err := strconv.Atoi(val.Value)
-						if err != nil {
-							return "", fmt.Errorf("invalid join ID in row %d column %s: %s", rowIdx, colName, val.Value)
-						}
-						name, ok := joinTable[id]
-						if !ok {
-							return "", fmt.Errorf("unknown join ID in row %d column %s: %d", rowIdx, colName, id)
-						}
-						cpdRow.Values.Set(colName, name)
-					default:
-						return "", fmt.Errorf("invalid join ID in row %d column %s: invalid type", rowIdx, colName)
-					}
-				} else if colName == "payload" {
-					// Handle payload specially
-					switch val.Kind {
-					case yaml.MappingNode:
-						payloadMap := orderedmapjson.NewAnyOrderedMap()
-						if err := yamlutil.ConvertNodeToOrderedMap(val, payloadMap); err != nil {
-							return "", fmt.Errorf("failed to decode payload in row %d: %w", rowIdx, err)
-						}
-						// Flatten payload fields into row
-						for el := payloadMap.Front(); el != nil; el = el.Next() {
-							cpdRow.Values.Set(el.Key, el.Value)
-						}
-					case yaml.ScalarNode:
-						if val.Tag == "!!null" || val.Value == "null" {
-							continue
-						}
-
-						tryVals := []string{val.Value}
-						if len(val.Value) >= 2 && ((val.Value[0] == '"' && val.Value[len(val.Value)-1] == '"') || (val.Value[0] == '\'' && val.Value[len(val.Value)-1] == '\'')) {
-							tryVals = append(tryVals, val.Value[1:len(val.Value)-1])
-						}
-						flattened := false
-						for _, tryVal := range tryVals {
-							trimmed := strings.TrimSpace(tryVal)
-							if len(trimmed) > 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' {
-								// Try parsing as a YAML document
-								var m map[string]interface{}
-								if err := yaml.Unmarshal([]byte(trimmed), &m); err == nil {
-									for k, v := range m {
-										cpdRow.Values.Set(k, v)
-									}
-									flattened = true
-									break
-								}
-							}
-							if flattened {
-								break
-							}
-						}
-						if !flattened {
-							cpdRow.Values.Set(colName, val.Value)
-						}
-					default:
-						return "", fmt.Errorf("unsupported payload node kind in row %d: %v", rowIdx, val.Kind)
-					}
-				} else {
-					// Regular scalar column
-					cpdRow.Values.Set(colName, val.Value)
-				}
-			}
-
-			cpdDoc.Data = append(cpdDoc.Data, cpdRow)
-		}
-
-		documents = append(documents, cpdDoc)
+		documents = append(documents, doc)
 	}
 
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("scan error: %w", err)
 	}
 
-	// Emit JSONL from all parsed documents
 	var jsonl strings.Builder
 	for _, doc := range documents {
 		jsonlStr, err := doc.ToJSONL()
@@ -703,6 +466,415 @@ func CPDToJSONL(r io.Reader) (string, error) {
 	}
 
 	return jsonl.String(), nil
+}
+
+// parseNextDocument parses a single CPD document from the scanner, propagating state
+func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTables map[string]*JoinTable, prevMeta *orderedmapjson.AnyOrderedMap, prevVersion string) (*CPDDocument, error) {
+	var headSection strings.Builder
+	var inDataSection bool
+	var dataLines []string
+	var foundDocument bool
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "---" {
+			if foundDocument {
+				break
+			}
+			foundDocument = true
+			continue
+		}
+		if !foundDocument && strings.TrimSpace(line) != "" {
+			foundDocument = true
+		}
+		if !foundDocument {
+			continue
+		}
+		if !inDataSection {
+			if strings.TrimSpace(line) == "data:" {
+				inDataSection = true
+				continue
+			}
+			headSection.WriteString(line)
+			headSection.WriteString("\n")
+		} else {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(line), "---") {
+				break
+			}
+			dataLines = append(dataLines, line)
+		}
+	}
+	if !foundDocument {
+		return nil, io.EOF
+	}
+	// Parse head section
+	headYAML := headSection.String()
+	var node yaml.Node
+	if strings.TrimSpace(headYAML) != "" {
+		if err := yaml.Unmarshal([]byte(headYAML), &node); err != nil {
+			return nil, fmt.Errorf("failed to parse head section YAML: %w", err)
+		}
+	}
+	doc := &CPDDocument{
+		Columns:    nil,
+		JoinTables: make(map[string]*JoinTable),
+		Data:       []*CPDRow{},
+		Meta:       orderedmapjson.NewAnyOrderedMap(),
+		Version:    "",
+	}
+	// Version
+	if versionNode := findNodeByKey(&node, "_version"); versionNode != nil {
+		doc.Version = versionNode.Value
+	} else {
+		doc.Version = prevVersion
+	}
+	// Meta
+	if metaNode := findNodeByKey(&node, "_meta"); metaNode != nil {
+		metaMap := orderedmapjson.NewAnyOrderedMap()
+		if err := yamlutil.ConvertNodeToOrderedMap(metaNode, metaMap); err != nil {
+			return nil, fmt.Errorf("failed to convert _meta: %w", err)
+		}
+		// Merge with previous metadata
+		if prevMeta != nil && prevMeta.Len() > 0 {
+			RecursiveMergeOrderedMaps(metaMap, prevMeta)
+		}
+		doc.Meta = metaMap
+	} else if prevMeta != nil && prevMeta.Len() > 0 {
+		doc.Meta = prevMeta
+	}
+	// Columns
+	if columnsNode := findNodeByKey(&node, "_columns"); columnsNode != nil {
+		if columnsNode.Kind != yaml.SequenceNode {
+			return nil, fmt.Errorf("_columns must be a sequence")
+		}
+		doc.Columns = make([]string, len(columnsNode.Content))
+		for i, col := range columnsNode.Content {
+			doc.Columns[i] = col.Value
+		}
+	} else if len(prevColumns) > 0 {
+		doc.Columns = make([]string, len(prevColumns))
+		copy(doc.Columns, prevColumns)
+	} else {
+		return nil, fmt.Errorf("missing required _columns")
+	}
+	// Join tables
+	for i := 0; node.Content != nil && i < len(node.Content[0].Content); i += 2 {
+		if i+1 >= len(node.Content[0].Content) {
+			break
+		}
+		key := node.Content[0].Content[i].Value
+		value := node.Content[0].Content[i+1]
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+		isJoinTable := false
+		for _, col := range doc.Columns {
+			if col == key {
+				isJoinTable = true
+				break
+			}
+		}
+		if isJoinTable {
+			if value.Kind != yaml.MappingNode {
+				return nil, fmt.Errorf("join table %s must be a mapping", key)
+			}
+			joinTable := &JoinTable{
+				NameToID: make(map[string]int),
+				IDToName: make(map[int]string),
+			}
+			for j := 0; j < len(value.Content); j += 2 {
+				if j+1 >= len(value.Content) {
+					break
+				}
+				name := value.Content[j].Value
+				idStr := value.Content[j+1].Value
+				if strings.TrimSpace(name) == "" {
+					return nil, fmt.Errorf("empty join table key in %s", key)
+				}
+				if value.Content[j+1].Tag == "!!str" {
+					return nil, fmt.Errorf("invalid join table ID in %s: %s (must be integer, not string)", key, idStr)
+				}
+				id, err := strconv.Atoi(idStr)
+				if err != nil {
+					return nil, fmt.Errorf("invalid join table ID in %s: %s", key, idStr)
+				}
+				if id < 0 {
+					return nil, fmt.Errorf("invalid join table ID in %s: %d (must be non-negative)", key, id)
+				}
+				if id > math.MaxInt32 {
+					return nil, fmt.Errorf("invalid join table ID in %s: %d (too large)", key, id)
+				}
+				if existingName, exists := joinTable.IDToName[id]; exists {
+					return nil, fmt.Errorf("duplicate ID in join table %s: %d (already maps to %s)", key, id, existingName)
+				}
+				for existingID, existingName := range joinTable.IDToName {
+					if existingName == name {
+						return nil, fmt.Errorf("duplicate key in join table %s: %s (already maps to %d)", key, name, existingID)
+					}
+				}
+				joinTable.NameToID[name] = id
+				joinTable.IDToName[id] = name
+			}
+			doc.JoinTables[key] = joinTable
+		}
+	}
+	// Propagate previous join tables if not present
+	for k, v := range prevJoinTables {
+		if v == nil {
+			continue // Skip nil join tables
+		}
+		if _, ok := doc.JoinTables[k]; !ok {
+			// Create a new join table and copy the data
+			doc.JoinTables[k] = &JoinTable{
+				NameToID: make(map[string]int),
+				IDToName: make(map[int]string),
+			}
+			for name, id := range v.NameToID {
+				doc.JoinTables[k].NameToID[name] = id
+				doc.JoinTables[k].IDToName[id] = name
+			}
+		} else {
+			// Check for conflicts when merging with existing join table
+			for name, id := range v.NameToID {
+				// Check for duplicate ID
+				if existingName, exists := doc.JoinTables[k].IDToName[id]; exists {
+					return nil, fmt.Errorf("duplicate ID in join table %s: %d (already maps to %s)", k, id, existingName)
+				}
+				// Check for duplicate key
+				if existingID, exists := doc.JoinTables[k].NameToID[name]; exists {
+					return nil, fmt.Errorf("duplicate key in join table %s: %s (already maps to %d)", k, name, existingID)
+				}
+				// Add the entry
+				doc.JoinTables[k].NameToID[name] = id
+				doc.JoinTables[k].IDToName[id] = name
+			}
+		}
+	}
+	// Parse data section
+	for lineIdx, line := range dataLines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		row, err := parseDataRow(line, doc.Columns, doc.JoinTables)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing data row %d: %w", lineIdx, err)
+		}
+		doc.Data = append(doc.Data, row)
+	}
+	return doc, nil
+}
+
+// parseDataRow parses a single data row line, flattening payload fields
+func parseDataRow(line string, columns []string, joinTables map[string]*JoinTable) (*CPDRow, error) {
+	line = strings.TrimPrefix(line, "- ")
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "[") || !strings.HasSuffix(line, "]") {
+		return nil, fmt.Errorf("data row must be an array")
+	}
+	inner := strings.TrimPrefix(strings.TrimSuffix(line, "]"), "[")
+	inner = strings.TrimSpace(inner)
+	var values []string
+	var current strings.Builder
+	var braceCount int
+	var bracketCount int
+	var inString bool
+	var escapeNext bool
+	for i := 0; i < len(inner); i++ {
+		ch := inner[i]
+		if escapeNext {
+			current.WriteByte(ch)
+			escapeNext = false
+			continue
+		}
+		if ch == '\\' {
+			escapeNext = true
+			current.WriteByte(ch)
+			continue
+		}
+		if ch == '"' && !escapeNext {
+			inString = !inString
+			current.WriteByte(ch)
+			continue
+		}
+		if !inString {
+			if ch == '{' {
+				braceCount++
+			} else if ch == '}' {
+				braceCount--
+			} else if ch == '[' {
+				bracketCount++
+			} else if ch == ']' {
+				bracketCount--
+			} else if ch == ',' && braceCount == 0 && bracketCount == 0 {
+				values = append(values, strings.TrimSpace(current.String()))
+				current.Reset()
+				continue
+			}
+		}
+		current.WriteByte(ch)
+	}
+	if current.Len() > 0 {
+		values = append(values, strings.TrimSpace(current.String()))
+	}
+	if len(values) > len(columns) {
+		return nil, fmt.Errorf("data row has %d values but only %d columns defined", len(values), len(columns))
+	}
+	row := &CPDRow{
+		Values: orderedmapjson.NewAnyOrderedMap(),
+	}
+	for colIdx := 0; colIdx < len(values); colIdx++ {
+		colName := columns[colIdx]
+		valStr := values[colIdx]
+		joinTable, isJoin := joinTables[colName]
+		val, err := parseValue(valStr, joinTable, isJoin)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing column %s: %w", colName, err)
+		}
+		if colName == "payload" && val != nil {
+			// Flatten payload fields
+			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
+				for el := om.Front(); el != nil; el = el.Next() {
+					row.Values.Set(el.Key, el.Value)
+				}
+			} else {
+				row.Values.Set(colName, val)
+			}
+		} else if colName == "time" && val != nil {
+			// Remove extra quotes from time
+			if s, ok := val.(string); ok && len(s) > 1 && s[0] == '"' && s[len(s)-1] == '"' {
+				row.Values.Set(colName, s[1:len(s)-1])
+			} else {
+				row.Values.Set(colName, val)
+			}
+		} else if val != nil {
+			row.Values.Set(colName, val)
+		}
+	}
+	return row, nil
+}
+
+// parseValue parses a single value from a data row
+func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, error) {
+	valStr = strings.TrimSpace(valStr)
+
+	// Handle null
+	if valStr == "null" {
+		return nil, nil
+	}
+
+	// Handle arrays (for join tables)
+	if strings.HasPrefix(valStr, "[") && strings.HasSuffix(valStr, "]") {
+		if !isJoin {
+			return nil, fmt.Errorf("array value requires join table")
+		}
+		if joinTable == nil {
+			return nil, fmt.Errorf("join table is nil for join field")
+		}
+
+		inner := strings.TrimPrefix(strings.TrimSuffix(valStr, "]"), "[")
+		inner = strings.TrimSpace(inner)
+
+		if inner == "" {
+			return []string{}, nil // Empty array
+		}
+
+		// Split by comma and parse IDs
+		parts := strings.Split(inner, ",")
+		var result []string
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+
+			// Parse as integer ID
+			id, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid join ID: %s", part)
+			}
+
+			// Look up name
+			if name, exists := joinTable.IDToName[id]; exists {
+				result = append(result, name)
+			} else {
+				return nil, fmt.Errorf("unknown join ID: %d", id)
+			}
+		}
+		return result, nil
+	}
+
+	// Handle objects (payload)
+	if strings.HasPrefix(valStr, "{") && strings.HasSuffix(valStr, "}") {
+		// Parse as YAML object
+		var obj map[string]interface{}
+		if err := yaml.Unmarshal([]byte(valStr), &obj); err != nil {
+			return nil, fmt.Errorf("failed to parse object: %w", err)
+		}
+
+		// Convert to ordered map
+		orderedObj := orderedmapjson.NewAnyOrderedMap()
+		for k, v := range obj {
+			orderedObj.Set(k, v)
+		}
+		return orderedObj, nil
+	}
+
+	// Handle quoted object strings (scalar payload)
+	if strings.HasPrefix(valStr, "\"{") && strings.HasSuffix(valStr, "}\"") {
+		// Remove the outer quotes and parse as object
+		unquoted := valStr[1 : len(valStr)-1]
+		var obj map[string]interface{}
+		if err := yaml.Unmarshal([]byte(unquoted), &obj); err != nil {
+			return nil, fmt.Errorf("failed to parse quoted object: %w", err)
+		}
+
+		// Convert to ordered map
+		orderedObj := orderedmapjson.NewAnyOrderedMap()
+		for k, v := range obj {
+			orderedObj.Set(k, v)
+		}
+		return orderedObj, nil
+	}
+
+	// Handle join table single values
+	if isJoin {
+		if joinTable == nil {
+			return nil, fmt.Errorf("join table is nil for join field")
+		}
+		// Parse as integer ID
+		id, err := strconv.Atoi(valStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid join ID: %s", valStr)
+		}
+
+		// Look up name
+		if name, exists := joinTable.IDToName[id]; exists {
+			return name, nil
+		} else {
+			return nil, fmt.Errorf("unknown join ID: %d", id)
+		}
+	}
+
+	// Handle regular scalar values
+	// Try to parse as number first
+	if f, err := strconv.ParseFloat(valStr, 64); err == nil {
+		return f, nil
+	}
+
+	// Try to parse as boolean
+	switch valStr {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+
+	// Default to string
+	return valStr, nil
 }
 
 // customMarshalJSON marshals a value to JSON, preserving decimal points for float values
