@@ -33,7 +33,6 @@ type CPDDocument struct {
 	JoinTables map[string]*JoinTable
 	Data       []*CPDRow
 	Meta       *orderedmapjson.AnyOrderedMap
-	MetaNew    *orderedmapjson.AnyOrderedMap
 	Version    string
 }
 
@@ -317,8 +316,6 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 		}
 
 		// Add flattened metadata if present
-		// Use d.Meta (prevMeta) for all rows in current document
-		// New metadata only appears in the next document
 		if d.Meta != nil && d.Meta.Len() > 0 {
 			flatMeta := orderedmapjson.NewAnyOrderedMap()
 			flattenMeta("_meta", d.Meta, flatMeta)
@@ -457,10 +454,10 @@ func CPDToJSONL(r io.Reader) (string, error) {
 		documents = append(documents, doc)
 
 		// Update currentMeta for the next document after processing this document
-		if doc.MetaNew != nil && doc.MetaNew.Len() > 0 {
+		if doc.Meta.Len() > 0 {
 			// Create a new map for the next document with merged metadata
 			currentMeta = orderedmapjson.NewAnyOrderedMap()
-			RecursiveMergeOrderedMaps(currentMeta, doc.MetaNew)
+			RecursiveMergeOrderedMaps(currentMeta, doc.Meta)
 		}
 	}
 
@@ -535,7 +532,6 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		JoinTables: make(map[string]*JoinTable),
 		Data:       []*CPDRow{},
 		Meta:       orderedmapjson.NewAnyOrderedMap(),
-		MetaNew:    orderedmapjson.NewAnyOrderedMap(),
 		Version:    "",
 	}
 	// Version
@@ -558,13 +554,11 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 			RecursiveMergeOrderedMaps(mergedMeta, prevMetaCopy)
 		}
 		RecursiveMergeOrderedMaps(mergedMeta, metaMap)
-		doc.Meta = mergedMeta    // Use merged metadata for current document
-		doc.MetaNew = mergedMeta // Propagate merged metadata for next document
+		doc.Meta = mergedMeta // Use merged metadata for current document
 	} else if prevMeta != nil && prevMeta.Len() > 0 {
 		// Create a deep copy of prevMeta to avoid modifying the original
 		prevMetaCopy := deepCopyOrderedMap(prevMeta)
 		doc.Meta = prevMetaCopy
-		doc.MetaNew = prevMetaCopy
 	}
 	// Columns
 	if columnsNode := findNodeByKey(&node, "_columns"); columnsNode != nil {
