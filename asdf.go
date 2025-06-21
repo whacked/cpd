@@ -130,7 +130,7 @@ func main() {
 			fmt.Printf("Error reading file: %v\n", err)
 			os.Exit(1)
 		}
-
+		fmt.Println(format)
 		if format == "jsonl" {
 			// Convert JSONL to YAML
 			yamlResult, err := codec.JSONLToCPD(strings.NewReader(string(fileData)))
