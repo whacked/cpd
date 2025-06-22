@@ -142,11 +142,17 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 						}
 					}
 
-					// Track values
+					// Track values - handle nil values safely
 					for _, v := range arr {
 						if str, ok := v.(string); ok {
-							currentLength, _ := stats.Values.Get(str)
-							stats.Values.Set(str, currentLength.(int)+1)
+							maybeCurrentLength, _ := stats.Values.Get(str)
+							currentLength := 0
+							if maybeCurrentLength != nil {
+								if count, ok := maybeCurrentLength.(int); ok {
+									currentLength = count
+								}
+							}
+							stats.Values.Set(str, currentLength+1)
 						}
 					}
 				}
@@ -158,7 +164,9 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 					maybeCurrentLength, _ := stats.Values.Get(str)
 					currentLength := 0
 					if maybeCurrentLength != nil {
-						currentLength = maybeCurrentLength.(int)
+						if count, ok := maybeCurrentLength.(int); ok {
+							currentLength = count
+						}
 					}
 					stats.Values.Set(str, currentLength+1)
 				}
@@ -177,9 +185,14 @@ func (stats *ValueStats) calculateEntropy() float64 {
 
 	var entropy float64
 	for key := range stats.Values.Keys() {
-		count, _ := stats.Values.Get(key)
-		p := float64(count.(int)) / float64(stats.TotalOccurrences)
-		entropy -= p * math.Log2(p)
+		maybeCount, _ := stats.Values.Get(key)
+		if maybeCount == nil {
+			continue
+		}
+		if count, ok := maybeCount.(int); ok {
+			p := float64(count) / float64(stats.TotalOccurrences)
+			entropy -= p * math.Log2(p)
+		}
 	}
 	return entropy
 }
@@ -191,9 +204,14 @@ func (stats *ValueStats) calculateGini() float64 {
 	}
 
 	var sumSquares float64
-	for count := range stats.Values.Values() {
-		p := float64(count.(int)) / float64(stats.TotalOccurrences)
-		sumSquares += p * p
+	for maybeCount := range stats.Values.Values() {
+		if maybeCount == nil {
+			continue
+		}
+		if count, ok := maybeCount.(int); ok {
+			p := float64(count) / float64(stats.TotalOccurrences)
+			sumSquares += p * p
+		}
 	}
 	return 1 - sumSquares
 }
@@ -205,9 +223,12 @@ func (stats *ValueStats) calculateMaxFrequency() float64 {
 	}
 
 	var maxCount int
-	for count := range stats.Values.Values() {
-		if count.(int) > maxCount {
-			maxCount = count.(int)
+	for maybeCount := range stats.Values.Values() {
+		if maybeCount == nil {
+			continue
+		}
+		if count, ok := maybeCount.(int); ok && count > maxCount {
+			maxCount = count
 		}
 	}
 	return float64(maxCount) / float64(stats.TotalOccurrences)
