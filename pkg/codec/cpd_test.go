@@ -1266,3 +1266,118 @@ data:
 		})
 	}
 }
+
+
+func TestJSONLToCPD_EmptyStringHandling(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "empty string value should not create join table entry",
+			input: `{"time":"2024-01-01","mass":""}`,
+			want:  `{"time":"2024-01-01","mass":""}`,
+		},
+		{
+			name:  "empty string value with other values",
+			input: `{"time":"2024-01-01","mass":"","weight":"100kg","status":"active"}`,
+			want:  `{"time":"2024-01-01","mass":"","weight":"100kg","status":"active"}`,
+		},
+		{
+			name:  "empty string value in array",
+			input: `{"time":"2024-01-01","tags":["tag1","","tag3"]}`,
+			want:  `{"time":"2024-01-01","tags":["tag1","","tag3"]}`,
+		},
+		{
+			name:  "empty string value in nested object",
+			input: `{"time":"2024-01-01","data":{"name":"test","description":"","value":123}}`,
+			want:  `{"time":"2024-01-01","data":{"name":"test","description":"","value":123}}`,
+		},
+		{
+			name:  "multiple empty string values",
+			input: `{"time":"2024-01-01","field1":"","field2":"","field3":"value"}`,
+			want:  `{"time":"2024-01-01","field1":"","field2":"","field3":"value"}`,
+		},
+		{
+			name:  "empty string value with special characters",
+			input: `{"time":"2024-01-01","@merge":"","normal":"value"}`,
+			want:  `{"time":"2024-01-01","@merge":"","normal":"value"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml, err := JSONLToCPD(strings.NewReader(tt.input))
+			if err != nil {
+				// Skip tests that fail due to YAML parsing limitations
+				t.Errorf("JSONLToCPD failed: %v", err)
+			}
+
+			jsonl, err := CPDToJSONL(strings.NewReader(yaml))
+			if err != nil {
+				// Skip tests that fail due to YAML parsing limitations
+				t.Errorf("CPDToJSONL failed: %v", err)
+			}
+
+			assert.Equal(t, tt.want+"\n", jsonl)
+		})
+	}
+}
+
+
+
+func TestJSONLToCPD_EmptyStringHandling(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "empty string value should not create join table entry",
+			input: `{"time":"2024-01-01","mass":""}`,
+			want:  `{"time":"2024-01-01","mass":""}`,
+		},
+		{
+			name:  "empty string value with other values",
+			input: `{"time":"2024-01-01","mass":"","weight":"100kg","status":"active"}`,
+			want:  `{"time":"2024-01-01","mass":"","weight":"100kg","status":"active"}`,
+		},
+		{
+			name:  "empty string value in array",
+			input: `{"time":"2024-01-01","tags":["tag1","","tag3"]}`,
+			want:  `{"time":"2024-01-01","tags":["tag1","","tag3"]}`,
+		},
+		{
+			name:  "empty string value in nested object",
+			input: `{"time":"2024-01-01","data":{"name":"test","description":"","value":123}}`,
+			want:  `{"time":"2024-01-01","data":{"name":"test","description":"","value":123}}`,
+		},
+		{
+			name:  "multiple empty string values",
+			input: `{"time":"2024-01-01","field1":"","field2":"","field3":"value"}`,
+			want:  `{"time":"2024-01-01","field1":"","field2":"","field3":"value"}`,
+		},
+		{
+			name:  "empty string value with special characters",
+			input: `{"time":"2024-01-01","@merge":"","normal":"value"}`,
+			want:  `{"time":"2024-01-01","@merge":"","normal":"value"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml, err := JSONLToCPD(strings.NewReader(tt.input))
+			if err != nil {
+				// Skip tests that fail due to YAML parsing limitations
+				t.Errorf("JSONLToCPD failed: %v", err)
+			}
+
+			jsonl, err := CPDToJSONL(strings.NewReader(yaml))
+			if err != nil {
+				// Skip tests that fail due to YAML parsing limitations
+				t.Errorf("CPDToJSONL failed: %v", err)
+			}
+
+			assert.Equal(t, tt.want+"\n", jsonl)
+		})
+	}
+}

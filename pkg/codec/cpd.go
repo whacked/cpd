@@ -809,6 +809,11 @@ func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 			if part == "" || part == "null" {
 				continue
 			}
+			// Accept quoted empty string as an empty string value
+			if part == "\"\"" {
+				result = append(result, "")
+				continue
+			}
 			// Reject nested arrays or objects
 			if strings.HasPrefix(part, "[") || strings.HasPrefix(part, "{") {
 				return nil, fmt.Errorf("invalid join ID: %s", part)
@@ -1094,6 +1099,9 @@ func JSONLToCPD(r io.Reader) (string, error) {
 		// Sort values to ensure deterministic order
 		var valueNames []string
 		for value := range joinFieldValues[field] {
+			if value == "" {
+				continue // skip empty string as join table key
+			}
 			valueNames = append(valueNames, value)
 		}
 		sort.Strings(valueNames)
@@ -1154,9 +1162,13 @@ func JSONLToCPD(r io.Reader) (string, error) {
 							rowValues[i+1] = nil // Unknown value, use null
 						}
 					case []interface{}:
-						var ids []int
+						var ids []interface{}
 						for _, item := range v {
 							if str, ok := item.(string); ok {
+								if str == "" {
+									ids = append(ids, "")
+									continue
+								}
 								if id, ok := joinTable[str]; ok {
 									ids = append(ids, id)
 								}
@@ -1232,13 +1244,20 @@ func JSONLToCPD(r io.Reader) (string, error) {
 				buf.WriteString(fmt.Sprintf("%q", v))
 			case int:
 				buf.WriteString(fmt.Sprintf("%d", v))
-			case []int:
+			case []interface{}:
 				buf.WriteString("[")
-				for j, id := range v {
+				for j, elem := range v {
 					if j > 0 {
 						buf.WriteString(", ")
 					}
-					buf.WriteString(fmt.Sprintf("%d", id))
+					switch e := elem.(type) {
+					case int:
+						buf.WriteString(fmt.Sprintf("%d", e))
+					case string:
+						buf.WriteString(fmt.Sprintf("%q", e))
+					default:
+						buf.WriteString(fmt.Sprintf("%v", e))
+					}
 				}
 				buf.WriteString("]")
 			case *orderedmapjson.AnyOrderedMap:
