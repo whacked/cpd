@@ -1610,3 +1610,54 @@ func TestJSONLToCPD_EmptyStringHandling(t *testing.T) {
 		})
 	}
 }
+
+func TestJSONLToCPD_RealWorldExample(t *testing.T) {
+	input := `{"time": "2019-03-13 08:04:30+0800", "entry": "\u80e1\u6912\u9905 half", "photo": ["20190313_080346.jpg"], "category": "ingest", "device": "SM-N912"}
+{"time": "2019-03-13 08:19:36+0800", "entry": "\u62b9\u8336\u7d05\u8c46 ijysheng", "photo": ["20190313_081745.jpg", "20190313_081929.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 08:32:00+0800", "entry": "\u852c\u679c\u540c\u5802 krunchee-veg", "photo": ["20190313_083235.jpg", "20190313_083253.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 08:56:06+0800", "entry": "\u5929\u3077\u3089\u308c\u3093\u3053\u3093\u305b\u3093\u3079\u3044", "mass": "12g", "barcode": ["EAN_13:4990855064882"], "photo": ["20190313_085454.jpg", "20190313_085505.jpg"], "device": "SM-N910C"}
+{"time": "2019-03-13 10:53:35+0800", "entry": "rivon chocolate pineapple cake", "photo": ["20190313_105301.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 14:28:58+0800", "entry": "\u91d1\u828b\u96d9\u559c", "photo": ["20190313_142727.jpg", "20190313_142828.jpg"], "category": "ingest", "device": "decoy123"}
+{"time": "2019-03-13 19:04:08+0800", "entry": "dinner food start", "photo": ["20190313_190341.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 21:51:48+0800", "entry": "\u5fa1\u54c1\u5713 \u51b0\u706b\u6e6f\u5713", "photo": ["20190313_215022.jpg"], "device": "SM-N910C"}
+{"time": "2019-03-13 22:45:16+0800", "entry": "\u9999\u74dc\uff0ccanteloupe", "photo": ["20190313_224448.jpg"], "category": "ingest", "device": "fakefake"}
+{"time": "2019-03-14 07:05:00+0800", "entry": "\u5149\u6cc9\u51b7\u6ce1\u8336\u51b0\u91c0\u70cf\u9f8d clear the dt", "mass": "585g", "barcode": ["EAN_13:4710105062884"], "photo": ["20190314_071813.jpg", "20190314_071828.jpg"], "dt": "21s", "device": "SM-N910C"}
+{"time": "2019-03-14 08:35:15+0800", "entry": "banana", "photo": ["20190314_083356.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-14 08:57:09+0800", "photo": ["20190314_085653.jpg"], "category": "blahblah", "device": "SM-N910C"}
+{"time": "2019-03-14 10:51:05+0800", "photo": ["20190314_105058.jpg"], "category": "foobar", "device": "SM-N910C"}
+{"time": "2019-03-14 10:53:28+0800", "photo": ["20190314_105317.jpg"], "category": "ingest", "device": "SM-N910C"}`
+
+	want := `_columns: [time, category, device, payload]
+category:
+  ingest: 1
+  blahblah: 2
+  foobar: 3
+device:
+  SM-N912: 1
+  SM-N910C: 2
+  decoy123: 3
+  fakefake: 4
+data:
+  - ["2019-03-13 08:04:30+0800", 1, 1, {entry: "胡椒餅 half", photo: ["20190313_080346.jpg"]}]
+  - ["2019-03-13 08:19:36+0800", 1, 2, {entry: "抹茶紅豆 ijysheng", photo: ["20190313_081745.jpg", "20190313_081929.jpg"]}]
+  - ["2019-03-13 08:32:00+0800", 1, 2, {entry: "蔬果同堂 krunchee-veg", photo: ["20190313_083235.jpg", "20190313_083253.jpg"]}]
+  - ["2019-03-13 08:56:06+0800", null, 2, {entry: "天ぷられんこんせんべい", mass: "12g", barcode: ["EAN_13:4990855064882"], photo: ["20190313_085454.jpg", "20190313_085505.jpg"]}]
+  - ["2019-03-13 10:53:35+0800", 1, 2, {entry: "rivon chocolate pineapple cake", photo: ["20190313_105301.jpg"]}]
+  - ["2019-03-13 14:28:58+0800", 1, 3, {entry: "金芋雙喜", photo: ["20190313_142727.jpg", "20190313_142828.jpg"]}]
+  - ["2019-03-13 19:04:08+0800", 1, 2, {entry: "dinner food start", photo: ["20190313_190341.jpg"]}]
+  - ["2019-03-13 21:51:48+0800", null, 2, {entry: "御品圓 冰火湯圓", photo: ["20190313_215022.jpg"]}]
+  - ["2019-03-13 22:45:16+0800", 1, 4, {entry: "香瓜，canteloupe", photo: ["20190313_224448.jpg"]}]
+  - ["2019-03-14 07:05:00+0800", null, 2, {entry: "光泉冷泡茶冰釀烏龍 clear the dt", mass: "585g", barcode: ["EAN_13:4710105062884"], dt: "21s", photo: ["20190314_071813.jpg", "20190314_071828.jpg"]}]
+  - ["2019-03-14 08:35:15+0800", 1, 2, {entry: "banana", photo: ["20190314_083356.jpg"]}]
+  - ["2019-03-14 08:57:09+0800", 2, 2, {photo: ["20190314_085653.jpg"]}]
+  - ["2019-03-14 10:51:05+0800", 3, 2, {photo: ["20190314_105058.jpg"]}]
+  - ["2019-03-14 10:53:28+0800", 1, 2, {photo: ["20190314_105317.jpg"]}]
+`
+
+	yaml, err := JSONLToCPD(strings.NewReader(input))
+	if err != nil {
+		t.Errorf("JSONLToCPD failed: %v", err)
+	}
+
+	assert.Equal(t, want, yaml)
+}
