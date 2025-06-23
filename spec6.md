@@ -82,31 +82,37 @@ An array of rows, each being a YAML flow-style sequence zipped with `_columns:`.
 * Rows may have fewer elements than `_columns:` → trailing columns are skipped
 * Rows **must not have more elements than `_columns:`**
 
-### Example
+---
 
-```yaml
-_columns: [time, authors, topic, payload]
-authors:
-  alice: 1
-  bob: 2
-topic:
-  food: 1
-data:
-  - ["2024-06-12T12:00:00Z", [1, 2], 1, {note: "ate natto"}]
-  - ["2024-06-13T13:30:00Z", 1, null]
-```
+## 🧠 Field Promotion Strategy
 
-### Per-Field Join Semantics
+When transforming JSONL into CPD:
 
-* A join column (e.g. `authors`) must:
+### Promote to top-level `_columns:` when:
 
-  * Be `int` → one-to-many
-  * Be `[]` → many-to-many
-  * Be `null` → no join
+* The field is always a scalar
+* The field appears in most rows
+* The field is semantically meaningful or supports indexing
+* The field contains repeated categorical values (considered for join table)
 
-* All other fields are treated as scalars or mappings depending on context
+### Promote to a **join table** if:
 
-* `payload` is expected to be a YAML mapping (object)
+* The field is scalar (usually a string) and
+* The value space is small and repeated (e.g. "activity", "device X")
+* The values are safe to encode bijectively into `string → int`
+
+### Preserve in **`payload`** if:
+
+* The field is optional, sparse, or freeform
+* The field is a nested object or array not meant for join resolution
+* The field has heterogeneous or unknown shape
+* The field’s name is **not** in `_columns`
+
+### `payload` field:
+
+* `payload` is a special field that captures **residual fields** not otherwise lifted into `_columns`
+* Must be a mapping object
+* Enables round-trippable and extensible JSONL reconstruction
 
 ---
 
@@ -148,6 +154,12 @@ Join fields may be expanded into M\:N or 1\:N join tables as needed.
 
 ---
 
+## ⚠️ Determinism and Ordering
+
+* JSON object serialization **must preserve key order** when round-tripping if equality is tested
+
+---
+
 ## ❗ Validation Rules
 
 * `_columns:` must exist
@@ -159,6 +171,5 @@ Join fields may be expanded into M\:N or 1\:N join tables as needed.
 * Join tables must map unique `string → int`
 * `_meta` is recursively and additively merged across documents
 * Join table merges must preserve bijection (no key or ID collisions)
-
----
+* The `payload` column (if present) must be a YAML mapping (JSON object)
 
