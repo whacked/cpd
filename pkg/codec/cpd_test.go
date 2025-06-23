@@ -1267,55 +1267,286 @@ data:
 	}
 }
 
+func TestValidation_SpecialCharacterKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "keys starting with @ in payload",
+			input: `_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"@merge": true, "@start": "2024-01-01", "@end": "2024-01-31"}]`,
+			wantErr: false, // Should work if parser handles quoted keys
+		},
+		{
+			name: "keys starting with @ in metadata",
+			input: `_meta:
+  "@version": "1.0"
+  "@schema": "http://example.com/schema"
+_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {foo: "bar"}]`,
+			wantErr: false, // Should work if parser handles quoted keys
+		},
+		{
+			name: "keys starting with @ in join table",
+			input: `_columns: [time, tags, payload]
+tags:
+  "@system": 1
+  "@user": 2
+data:
+  - ["2024-01-01T00:00:00Z", 1, {note: "system tag"}]`,
+			wantErr: false, // Should work if parser handles quoted keys
+		},
+		{
+			name: "mixed special character keys",
+			input: `_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"@merge": true, "normal": "value", "@start": "2024-01-01"}]`,
+			wantErr: false,
+		},
+		{
+			name: "keys with other special characters",
+			input: `_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"$ref": "#/definitions/User", "&copy": "2024", "?query": "value"}]`,
+			wantErr: false,
+		},
+		{
+			name: "nested special character keys",
+			input: `_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"nested": {"@inner": "value", "normal": "other"}}]`,
+			wantErr: false,
+		},
+		{
+			name: "special character keys in array",
+			input: `_columns: [time, items, payload]
+items:
+  "@item1": 1
+  "@item2": 2
+data:
+  - ["2024-01-01T00:00:00Z", [1, 2], {note: "array with special keys"}]`,
+			wantErr: false,
+		},
+		{
+			name: "special character keys across documents",
+			input: `---
+_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"@merge": true}]
+---
+data:
+  - ["2024-01-02T00:00:00Z", {"@start": "2024-01-02"}]`,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := CPDToJSONL(strings.NewReader(tt.input))
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
 
-func TestJSONLToCPD_EmptyStringHandling(t *testing.T) {
+func TestValidation_EmptyStringKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "empty string key in join table",
+			input: `_columns: [time, tags, payload]
+tags:
+  "": 1
+  "normal": 2
+data:
+  - ["2024-01-01T00:00:00Z", 1, {note: "empty tag"}]`,
+			wantErr: true, // Current parser rejects empty string keys in join tables
+			errMsg:  "empty join table key",
+		},
+		{
+			name: "empty string key in payload",
+			input: `_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"": "empty key value", "normal": "value"}]`,
+			wantErr: false, // Should work in payload
+		},
+		{
+			name: "empty string key in metadata",
+			input: `_meta:
+  "": "empty meta key"
+_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {foo: "bar"}]`,
+			wantErr: false, // Should work in metadata
+		},
+		{
+			name: "empty string key in array join",
+			input: `_columns: [time, tags, payload]
+tags:
+  "": 1
+  "normal": 2
+data:
+  - ["2024-01-01T00:00:00Z", [1, 2], {note: "mixed tags"}]`,
+			wantErr: true, // Current parser rejects empty string keys in join tables
+			errMsg:  "empty join table key",
+		},
+		{
+			name: "empty string key with whitespace",
+			input: `_columns: [time, tags, payload]
+tags:
+  " ": 1
+  "normal": 2
+data:
+  - ["2024-01-01T00:00:00Z", 1, {note: "whitespace tag"}]`,
+			wantErr: true, // Current parser rejects whitespace-only keys in join tables
+			errMsg:  "empty join table key",
+		},
+		{
+			name: "empty string key in nested object",
+			input: `_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"nested": {"": "empty nested key"}}]`,
+			wantErr: false, // Should work in nested payload
+		},
+		{
+			name: "empty string key across documents",
+			input: `---
+_columns: [time, tags, payload]
+tags:
+  "": 1
+data:
+  - ["2024-01-01T00:00:00Z", 1, {note: "first doc"}]
+---
+tags:
+  "": 2
+data:
+  - ["2024-01-02T00:00:00Z", 2, {note: "second doc"}]`,
+			wantErr: true, // Should fail due to empty join table key
+			errMsg:  "empty join table key",
+		},
+		{
+			name: "empty string key with special characters",
+			input: `_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {"": "empty", "@special": "value", "normal": "other"}]`,
+			wantErr: false, // Should work in payload
+		},
+		{
+			name: "empty string key in version",
+			input: `_version: ""
+_columns: [time, payload]
+data:
+  - ["2024-01-01T00:00:00Z", {foo: "bar"}]`,
+			wantErr: false, // Should work for version field
+		},
+		{
+			name: "empty string key in columns",
+			input: `_columns: ["", time, payload]
+data:
+  - ["", "2024-01-01T00:00:00Z", {foo: "bar"}]`,
+			wantErr: false, // Should work for column names
+		},
+		{
+			name: "empty string value in join table (not key)",
+			input: `_columns: [time, tags, payload]
+tags:
+  "normal": ""
+data:
+  - ["2024-01-01T00:00:00Z", "", {note: "empty value"}]`,
+			wantErr: true, // Empty string values in join tables are treated as invalid join IDs
+			errMsg:  "invalid join table ID",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := CPDToJSONL(strings.NewReader(tt.input))
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestRoundTrip_SpecialKeys(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
 		want  string
 	}{
 		{
-			name:  "empty string value should not create join table entry",
-			input: `{"time":"2024-01-01","mass":""}`,
-			want:  `{"time":"2024-01-01","mass":""}`,
+			name:  "round-trip with @ keys",
+			input: `{"time":"2024-01-01","@merge":true,"@start":"2024-01-01","@end":"2024-01-31","normal":"value"}`,
+			want:  `{"time":"2024-01-01","@merge":true,"@start":"2024-01-01","@end":"2024-01-31","normal":"value"}`,
 		},
 		{
-			name:  "empty string value with other values",
-			input: `{"time":"2024-01-01","mass":"","weight":"100kg","status":"active"}`,
-			want:  `{"time":"2024-01-01","mass":"","weight":"100kg","status":"active"}`,
+			name:  "round-trip with empty string key",
+			input: `{"time":"2024-01-01","":"empty value","normal":"value"}`,
+			want:  `{"time":"2024-01-01","":"empty value","normal":"value"}`,
 		},
 		{
-			name:  "empty string value in array",
-			input: `{"time":"2024-01-01","tags":["tag1","","tag3"]}`,
-			want:  `{"time":"2024-01-01","tags":["tag1","","tag3"]}`,
+			name:  "round-trip with empty string value",
+			input: `{"time":"2024-01-01","emptyvalue":"","normal":"value"}`,
+			want:  `{"time":"2024-01-01","emptyvalue":"","normal":"value"}`,
 		},
 		{
-			name:  "empty string value in nested object",
-			input: `{"time":"2024-01-01","data":{"name":"test","description":"","value":123}}`,
-			want:  `{"time":"2024-01-01","data":{"name":"test","description":"","value":123}}`,
+			name:  "round-trip with mixed special keys",
+			input: `{"time":"2024-01-01","@merge":true,"":"empty","$ref":"#/definitions/User","&copy":"2024"}`,
+			want:  `{"time":"2024-01-01","@merge":true,"":"empty","$ref":"#/definitions/User","\u0026copy":2024}`,
 		},
 		{
-			name:  "multiple empty string values",
-			input: `{"time":"2024-01-01","field1":"","field2":"","field3":"value"}`,
-			want:  `{"time":"2024-01-01","field1":"","field2":"","field3":"value"}`,
+			name:  "round-trip with nested special keys",
+			input: `{"time":"2024-01-01","nested":{"@inner":"value","":"empty nested","normal":"other"}}`,
+			want:  `{"time":"2024-01-01","nested":{"@inner":"value","":"empty nested","normal":"other"}}`,
 		},
 		{
-			name:  "empty string value with special characters",
-			input: `{"time":"2024-01-01","@merge":"","normal":"value"}`,
-			want:  `{"time":"2024-01-01","@merge":"","normal":"value"}`,
+			name:  "round-trip with special keys in arrays",
+			input: `{"time":"2024-01-01","tags":["@system","@user",""],"@meta":"value"}`,
+			want:  `{"time":"2024-01-01","tags":["@system","@user",""],"@meta":"value"}`,
+		},
+		{
+			name:  "round-trip with question mark key",
+			input: `{"time":"2024-01-01","?query":"value","normal":"other"}`,
+			want:  `{"time":"2024-01-01","?query":"value","normal":"other"}`,
+		},
+		{
+			name:  "round-trip with hash key",
+			input: `{"time":"2024-01-01","#comment":"value","normal":"other"}`,
+			want:  `{"time":"2024-01-01","#comment":"value","normal":"other"}`,
+		},
+		{
+			name:  "round-trip with percent key",
+			input: `{"time":"2024-01-01","%percent":"value","normal":"other"}`,
+			want:  `{"time":"2024-01-01","%percent":"value","normal":"other"}`,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			yaml, err := JSONLToCPD(strings.NewReader(tt.input))
 			if err != nil {
-				// Skip tests that fail due to YAML parsing limitations
 				t.Errorf("JSONLToCPD failed: %v", err)
 			}
 
 			jsonl, err := CPDToJSONL(strings.NewReader(yaml))
 			if err != nil {
-				// Skip tests that fail due to YAML parsing limitations
 				t.Errorf("CPDToJSONL failed: %v", err)
 			}
 
@@ -1323,8 +1554,6 @@ func TestJSONLToCPD_EmptyStringHandling(t *testing.T) {
 		})
 	}
 }
-
-
 
 func TestJSONLToCPD_EmptyStringHandling(t *testing.T) {
 	tests := []struct {

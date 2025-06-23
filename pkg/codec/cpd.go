@@ -14,6 +14,7 @@ import (
 
 	"github.com/GitRowin/orderedmapjson"
 	"github.com/whacked/yamdb/pkg/io/yamlutil"
+	"github.com/whacked/yamdb/pkg/relational"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1014,8 +1015,8 @@ func needsQuoting(s string) bool {
 
 // JSONLToCPD converts a JSONL file to CPD YAML format
 func JSONLToCPD(r io.Reader) (string, error) {
-	// First pass: collect all unique values for potential join fields and track version
-	joinFieldValues := make(map[string]map[string]int) // field -> value -> count
+	// First pass: collect all records and analyze field distributions
+	var allRecords []*orderedmapjson.AnyOrderedMap
 	var currentVersion int
 	scanner := bufio.NewScanner(r)
 
@@ -1039,49 +1040,42 @@ func JSONLToCPD(r io.Reader) (string, error) {
 			}
 		}
 
-		// Analyze each field to determine if it should be a join field
-		for el := record.Front(); el != nil; el = el.Next() {
-			if el.Key == "_version" || strings.HasPrefix(el.Key, "_meta") {
-				continue // Skip metadata fields
-			}
-
-			// Check if this field contains string values that could be join values
-			switch v := el.Value.(type) {
-			case string:
-				// Single string value - potential join field
-				if _, exists := joinFieldValues[el.Key]; !exists {
-					joinFieldValues[el.Key] = make(map[string]int)
-				}
-				joinFieldValues[el.Key][v]++
-			case []interface{}:
-				// Array of values - potential join field
-				if _, exists := joinFieldValues[el.Key]; !exists {
-					joinFieldValues[el.Key] = make(map[string]int)
-				}
-				for _, item := range v {
-					if str, ok := item.(string); ok {
-						joinFieldValues[el.Key][str]++
-					}
-				}
-			}
-		}
+		allRecords = append(allRecords, record)
 	}
 
-	// Determine which fields should be join fields (have multiple string values)
-	// Use ordered map to preserve field order
+	// Use TableDeriver to analyze field distributions and identify good join candidates
+	deriver := relational.NewTableDeriver()
+	if err := deriver.ProcessHistory(allRecords); err != nil {
+		return "", fmt.Errorf("failed to analyze field distributions: %w", err)
+	}
+
+	fieldInfo := deriver.GetFieldInfo()
+
+	// Determine which fields should be join fields based on sophisticated analysis
 	joinFields := orderedmapjson.NewAnyOrderedMap()
 	columns := []string{"time"} // Always include time as first column
 
 	// Sort field names to ensure deterministic order
 	var fieldNames []string
-	for field := range joinFieldValues {
+	for field := range fieldInfo {
 		fieldNames = append(fieldNames, field)
 	}
 	sort.Strings(fieldNames)
 
 	for _, field := range fieldNames {
-		values := joinFieldValues[field]
-		if len(values) > 1 && field != "time" {
+		info := fieldInfo[field]
+
+		// Only create join tables for fields that are good candidates
+		// Criteria:
+		// 1. Must be categorized as one-to-many or many-to-many
+		// 2. Must have reasonable compression potential (not unique values)
+		// 3. Must not be time field
+		// 4. Must have string element type (for join tables)
+		if field != "time" &&
+			(info.Category == relational.FieldCategoryOneToMany || info.Category == relational.FieldCategoryManyToMany) &&
+			info.ElementType == "string" &&
+			info.UniqueValues > 1 &&
+			info.UniqueValues < info.TotalRecords {
 			joinFields.Set(field, true)
 			columns = append(columns, field)
 		}
@@ -1090,19 +1084,26 @@ func JSONLToCPD(r io.Reader) (string, error) {
 	// Add payload as last column
 	columns = append(columns, "payload")
 
-	// Create join tables
+	// Create join tables for the selected fields
 	joinTables := make(map[string]map[string]int)
 	for el := joinFields.Front(); el != nil; el = el.Next() {
 		field := el.Key
 		joinTables[field] = make(map[string]int)
 		id := 1
+
+		// Get the field stats to extract unique values
+		stats := deriver.FieldStats[field]
+		if stats == nil {
+			continue
+		}
+
 		// Sort values to ensure deterministic order
 		var valueNames []string
-		for value := range joinFieldValues[field] {
-			if value == "" {
+		for key := range stats.Values.Keys() {
+			if key == "" {
 				continue // skip empty string as join table key
 			}
-			valueNames = append(valueNames, value)
+			valueNames = append(valueNames, key)
 		}
 		sort.Strings(valueNames)
 		for _, value := range valueNames {
@@ -1120,7 +1121,7 @@ func JSONLToCPD(r io.Reader) (string, error) {
 		return "", fmt.Errorf("reader must be seekable")
 	}
 
-	// Second pass: convert records
+	// Second pass: convert records using the smart join table decisions
 	var data []interface{}
 	scanner = bufio.NewScanner(r)
 	for scanner.Scan() {
