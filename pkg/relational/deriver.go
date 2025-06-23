@@ -159,7 +159,8 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 			} else if str, ok := value.(string); ok {
 				// Handle string fields
 				stats.TotalOccurrences++
-				stats.TotalElements++ // For string fields, this is the same as occurrences
+				stats.TotalElements++        // For string fields, this is the same as occurrences
+				stats.ElementType = "string" // Set element type for string fields
 				if stats.Values.Len() < MaxUniqueValues {
 					maybeCurrentLength, _ := stats.Values.Get(str)
 					currentLength := 0

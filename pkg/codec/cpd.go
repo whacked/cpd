@@ -254,13 +254,16 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 							trimmed := strings.TrimSpace(tryVal)
 							if len(trimmed) > 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' {
 								// Try parsing as a YAML document
-								var m map[string]interface{}
-								if err := yaml.Unmarshal([]byte(trimmed), &m); err == nil {
-									for k, v := range m {
-										cpdRow.Values.Set(k, v)
+								var node yaml.Node
+								if err := yaml.Unmarshal([]byte(trimmed), &node); err == nil {
+									orderedObj := orderedmapjson.NewAnyOrderedMap()
+									if err := yamlutil.ConvertNodeToOrderedMap(&node, orderedObj); err == nil {
+										for el := orderedObj.Front(); el != nil; el = el.Next() {
+											cpdRow.Values.Set(el.Key, el.Value)
+										}
+										flattened = true
+										break
 									}
-									flattened = true
-									break
 								}
 							}
 							if flattened {
@@ -966,13 +969,8 @@ func parseInt(s string) int {
 func formatYAMLValue(v interface{}) string {
 	switch val := v.(type) {
 	case string:
-		// Only quote strings that need it
-		if needsQuoting(val) {
-			return fmt.Sprintf("%q", val)
-		}
-		return val
+		return fmt.Sprintf("%q", val)
 	case float64:
-		// Format floats with decimal point
 		if float64(int64(val)) == val {
 			return fmt.Sprintf("%.1f", val)
 		}
@@ -982,7 +980,6 @@ func formatYAMLValue(v interface{}) string {
 	case nil:
 		return "null"
 	default:
-		// For any other type, use json.Marshal to ensure proper formatting
 		if b, err := json.Marshal(val); err == nil {
 			return string(b)
 		}
@@ -1011,6 +1008,73 @@ func needsQuoting(s string) bool {
 	}
 
 	return false
+}
+
+// isNumberLike returns true if the string starts with a digit and is followed by optional letters (e.g., 12g, 585g, 21s)
+func isNumberLike(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	start := 0
+	if s[0] == '-' || s[0] == '+' {
+		start = 1
+	}
+	seenDigit := false
+	for _, r := range s[start:] {
+		if unicode.IsDigit(r) {
+			seenDigit = true
+			continue
+		}
+		if unicode.IsLetter(r) {
+			if !seenDigit {
+				return false
+			}
+			continue
+		}
+		if r == '.' {
+			if !seenDigit {
+				return false
+			}
+			continue
+		}
+		if r == ' ' {
+			return false
+		}
+		return false
+	}
+	return seenDigit
+}
+
+// isCJK returns true if the string contains only CJK (no ASCII letters or digits), spaces, or punctuation
+func isCJK(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, r := range s {
+		if r <= 127 && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			return false
+		}
+	}
+	return true
+}
+
+// isUnquotedAllowed returns true if the string can be safely emitted unquoted in YAML
+func isUnquotedAllowed(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	// Check for special YAML values
+	switch s {
+	case "null", "true", "false", "yes", "no", "on", "off", "y", "n":
+		return false
+	}
+	// Check for special characters or spaces
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // JSONLToCPD converts a JSONL file to CPD YAML format
@@ -1049,35 +1113,48 @@ func JSONLToCPD(r io.Reader) (string, error) {
 		return "", fmt.Errorf("failed to analyze field distributions: %w", err)
 	}
 
+	// Get sophisticated join table candidates with scores
+	joinCandidates := deriver.GetJoinTableCandidates()
 	fieldInfo := deriver.GetFieldInfo()
 
 	// Determine which fields should be join fields based on sophisticated analysis
 	joinFields := orderedmapjson.NewAnyOrderedMap()
 	columns := []string{"time"} // Always include time as first column
 
-	// Sort field names to ensure deterministic order
-	var fieldNames []string
-	for field := range fieldInfo {
-		fieldNames = append(fieldNames, field)
+	// Sort candidates by score (highest first) for optimal selection
+	type candidateScore struct {
+		field string
+		score float64
 	}
-	sort.Strings(fieldNames)
+	var candidates []candidateScore
+	for field, score := range joinCandidates {
+		candidates = append(candidates, candidateScore{field, score})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
 
-	for _, field := range fieldNames {
-		info := fieldInfo[field]
+	// Select top-scoring candidates for join tables
+	// Use adaptive threshold based on data characteristics
+	threshold := 0.4 // Base threshold
+	if len(candidates) > 0 {
+		// Adjust threshold based on the best candidate's score
+		bestScore := candidates[0].score
+		if bestScore > 0.7 {
+			threshold = 0.5 // Higher threshold for high-quality candidates
+		} else if bestScore < 0.5 {
+			threshold = 0.3 // Lower threshold for lower-quality candidates
+		}
+	}
 
-		// Only create join tables for fields that are good candidates
-		// Criteria:
-		// 1. Must be categorized as one-to-many or many-to-many
-		// 2. Must have reasonable compression potential (not unique values)
-		// 3. Must not be time field
-		// 4. Must have string element type (for join tables)
-		if field != "time" &&
-			(info.Category == relational.FieldCategoryOneToMany || info.Category == relational.FieldCategoryManyToMany) &&
-			info.ElementType == "string" &&
-			info.UniqueValues > 1 &&
-			info.UniqueValues < info.TotalRecords {
-			joinFields.Set(field, true)
-			columns = append(columns, field)
+	for _, candidate := range candidates {
+		if candidate.score >= threshold {
+			info := fieldInfo[candidate.field]
+			// Additional validation: ensure it's a good candidate
+			if info != nil && info.ElementType == "string" && info.UniqueValues > 1 {
+				joinFields.Set(candidate.field, true)
+				columns = append(columns, candidate.field)
+			}
 		}
 	}
 
@@ -1097,15 +1174,39 @@ func JSONLToCPD(r io.Reader) (string, error) {
 			continue
 		}
 
-		// Sort values to ensure deterministic order
-		var valueNames []string
-		for key := range stats.Values.Keys() {
-			if key == "" {
-				continue // skip empty string as join table key
+		// Create a map to track first appearance order
+		firstAppearance := make(map[string]int)
+		order := 0
+
+		// Go through all records to find first appearance order
+		for _, record := range allRecords {
+			if value, exists := record.Get(field); exists {
+				switch v := value.(type) {
+				case string:
+					if v != "" && firstAppearance[v] == 0 {
+						firstAppearance[v] = order
+						order++
+					}
+				case []interface{}:
+					for _, item := range v {
+						if str, ok := item.(string); ok && str != "" && firstAppearance[str] == 0 {
+							firstAppearance[str] = order
+							order++
+						}
+					}
+				}
 			}
-			valueNames = append(valueNames, key)
 		}
-		sort.Strings(valueNames)
+
+		// Sort values by first appearance order
+		var valueNames []string
+		for value := range firstAppearance {
+			valueNames = append(valueNames, value)
+		}
+		sort.Slice(valueNames, func(i, j int) bool {
+			return firstAppearance[valueNames[i]] < firstAppearance[valueNames[j]]
+		})
+
 		for _, value := range valueNames {
 			joinTables[field][value] = id
 			id++
@@ -1207,25 +1308,32 @@ func JSONLToCPD(r io.Reader) (string, error) {
 	}
 
 	// Add columns section
-	buf.WriteString("_columns:\n")
-	for _, col := range columns {
-		buf.WriteString(fmt.Sprintf("  - %s\n", col))
+	buf.WriteString("_columns: [")
+	for i, col := range columns {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(col)
 	}
+	buf.WriteString("]\n")
 
 	// Add join tables
 	for el := joinFields.Front(); el != nil; el = el.Next() {
 		field := el.Key
 		joinTable := joinTables[field]
 		buf.WriteString(fmt.Sprintf("%s:\n", field))
-		// Sort values to ensure deterministic order
-		var valueNames []string
-		for value := range joinTable {
-			valueNames = append(valueNames, value)
+		// Collect (value, id) pairs and sort by id
+		type pair struct {
+			value string
+			id    int
 		}
-		sort.Strings(valueNames)
-		for _, value := range valueNames {
-			id := joinTable[value]
-			buf.WriteString(fmt.Sprintf("  %s: %d\n", value, id))
+		var pairs []pair
+		for value, id := range joinTable {
+			pairs = append(pairs, pair{value, id})
+		}
+		sort.Slice(pairs, func(i, j int) bool { return pairs[i].id < pairs[j].id })
+		for _, p := range pairs {
+			buf.WriteString(fmt.Sprintf("  %s: %d\n", p.value, p.id))
 		}
 	}
 
@@ -1272,8 +1380,7 @@ func JSONLToCPD(r io.Reader) (string, error) {
 							buf.WriteString(", ")
 						}
 						keyIndex++
-						keyBytes, _ := json.Marshal(el.Key)
-						buf.Write(keyBytes)
+						buf.WriteString(el.Key)
 						buf.WriteString(": ")
 						buf.WriteString(formatYAMLValue(el.Value))
 					}
@@ -1294,10 +1401,6 @@ func JSONLToCPD(r io.Reader) (string, error) {
 // Add this helper at the end of the file:
 func flattenMeta(prefix string, v interface{}, out *orderedmapjson.AnyOrderedMap) {
 	switch val := v.(type) {
-	case map[string]interface{}:
-		for k, subv := range val {
-			flattenMeta(prefix+"."+k, subv, out)
-		}
 	case *orderedmapjson.AnyOrderedMap:
 		for el := val.Front(); el != nil; el = el.Next() {
 			flattenMeta(prefix+"."+el.Key, el.Value, out)
