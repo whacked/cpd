@@ -102,8 +102,8 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 			field := el.Key
 			value := el.Value
 
-			// Skip special fields
-			if field[0] == '_' {
+			// Skip special fields and empty fields
+			if len(field) == 0 || field[0] == '_' {
 				continue
 			}
 
