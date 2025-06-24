@@ -1371,7 +1371,7 @@ func JSONLToCPD(r io.Reader) (string, error) {
 				buf.WriteString("]")
 			case *orderedmapjson.AnyOrderedMap:
 				if v.Len() == 0 {
-					buf.WriteString("null")
+					buf.WriteString("~")
 				} else {
 					buf.WriteString("{")
 					keyIndex := 0
@@ -1387,7 +1387,7 @@ func JSONLToCPD(r io.Reader) (string, error) {
 					buf.WriteString("}")
 				}
 			case nil:
-				buf.WriteString("null")
+				buf.WriteString("~")
 			default:
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
