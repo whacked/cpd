@@ -1,4 +1,4 @@
-package relational
+package test
 
 import (
 	"fmt"
@@ -8,11 +8,12 @@ import (
 
 	"github.com/whacked/yamdb/pkg/codec"
 	jio "github.com/whacked/yamdb/pkg/io/jsonl"
+	"github.com/whacked/yamdb/pkg/relational"
 )
 
 func TestTableDeriver(t *testing.T) {
 	// Try to open the JSONL file
-	file, err := os.Open("../../tests/example-2.jsonl")
+	file, err := os.Open("../testdata/example-2.jsonl")
 	if err != nil {
 		t.Fatalf("Failed to open file: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestTableDeriver(t *testing.T) {
 	}
 
 	// Create deriver and process history
-	deriver := NewTableDeriver()
+	deriver := relational.NewTableDeriver()
 	err = deriver.ProcessHistory(processor.RecordHistory)
 	if err != nil {
 		t.Fatalf("Failed to process history: %v", err)
@@ -51,29 +52,29 @@ func TestTableDeriver(t *testing.T) {
 	for name, info := range fieldInfo {
 		t.Logf("\nField: %s", name)
 		t.Logf("  Type: %v", info.ElementType)
-		t.Logf("  Category: %v", GetCategoryString(info.Category))
+		t.Logf("  Category: %v", relational.GetCategoryString(info.Category))
 		t.Logf("  Unique Values: %d", info.UniqueValues)
 		t.Logf("  Total Count: %d", info.TotalRecords)
 	}
 
 	// Generate and log DDL
 	t.Log("\nSQLite DDL:")
-	ddl := GenerateSQLiteDDL(fieldInfo, "data")
+	ddl := relational.GenerateSQLiteDDL(fieldInfo, "data")
 	t.Log("\n" + ddl)
 
 	// Generate and log INSERT statements
 	t.Log("\nSQLite INSERT statements:")
-	inserts, err := GenerateSQLiteInserts(fieldInfo, processor.RecordHistory)
+	inserts, err := relational.GenerateSQLiteInserts(fieldInfo, processor.RecordHistory)
 	if err != nil {
 		t.Fatalf("Failed to generate INSERT statements: %v", err)
 	}
 	t.Log("\n" + inserts)
 
 	// Verify specific field categorizations
-	expectedCategories := map[string]FieldCategory{
-		"tags":   FieldCategoryManyToMany,
-		"event":  FieldCategoryOneToMany,
-		"status": FieldCategoryOneToMany,
+	expectedCategories := map[string]relational.FieldCategory{
+		"tags":   relational.FieldCategoryManyToMany,
+		"event":  relational.FieldCategoryOneToMany,
+		"status": relational.FieldCategoryOneToMany,
 	}
 
 	for field, expectedCategory := range expectedCategories {
@@ -88,7 +89,7 @@ func TestTableDeriver(t *testing.T) {
 		}
 
 		// Verify array status for many-to-many fields
-		if expectedCategory == FieldCategoryManyToMany && !info.IsArray {
+		if expectedCategory == relational.FieldCategoryManyToMany && !info.IsArray {
 			t.Errorf("Field %s: expected to be an array field", field)
 		}
 
@@ -109,7 +110,7 @@ func TestTableDeriver(t *testing.T) {
 // unit test ───────────────────────────────────────────────────────────────────
 func Test_FieldInfo_FromExample2(t *testing.T) {
 
-	file, err := os.Open("../../tests/example-2.jsonl")
+	file, err := os.Open("../testdata/example-2.jsonl")
 	if err != nil {
 		t.Fatalf("Failed to open file: %v", err)
 	}
@@ -133,7 +134,7 @@ func Test_FieldInfo_FromExample2(t *testing.T) {
 	}
 
 	// Create deriver and process history
-	deriver := NewTableDeriver()
+	deriver := relational.NewTableDeriver()
 
 	err = deriver.ProcessHistory(processor.RecordHistory)
 	if err != nil {
@@ -143,14 +144,14 @@ func Test_FieldInfo_FromExample2(t *testing.T) {
 
 	// Expectations distilled from the console output posted in the prompt.
 	want := map[string]struct {
-		cat  FieldCategory
+		cat  relational.FieldCategory
 		arr  bool
 		uniq int
 	}{
-		"location": {FieldCategoryUnknown, false, 4},
+		"location": {relational.FieldCategoryUnknown, false, 4},
 		// cat tests/example-2.jsonl | grep '^{' | jq -c '.tags | select(. != null and length > 0)' | jq -r '.[]' | sort | uniq | wc -l
-		"tags":  {FieldCategoryManyToMany, true, 8},
-		"event": {FieldCategoryOneToMany, false, 5},
+		"tags":  {relational.FieldCategoryManyToMany, true, 8},
+		"event": {relational.FieldCategoryOneToMany, false, 5},
 	}
 
 	for field, w := range want {
@@ -163,7 +164,7 @@ func Test_FieldInfo_FromExample2(t *testing.T) {
 		fmt.Printf("field: %q, got: %+v\n", field, got)
 		if got.Category != w.cat {
 			t.Errorf("%s: Category = %v, want %v",
-				field, GetCategoryString(got.Category), GetCategoryString(w.cat))
+				field, relational.GetCategoryString(got.Category), relational.GetCategoryString(w.cat))
 		}
 		if got.IsArray != w.arr {
 			t.Errorf("FIXME %s: IsArray = %v, want %v", field, got.IsArray, w.arr)
