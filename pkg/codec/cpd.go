@@ -969,6 +969,10 @@ func parseInt(s string) int {
 func formatYAMLValue(v interface{}) string {
 	switch val := v.(type) {
 	case string:
+		// If the string looks like an integer, emit as number (unquoted)
+		if isAllDigits(val) {
+			return val
+		}
 		return fmt.Sprintf("%q", val)
 	case float64:
 		if float64(int64(val)) == val {
@@ -985,6 +989,19 @@ func formatYAMLValue(v interface{}) string {
 		}
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// isAllDigits returns true if the string consists only of digits (for integer detection)
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // needsQuoting determines if a string needs to be quoted in YAML
@@ -1444,7 +1461,7 @@ func JSONLToCPD(r io.Reader) (string, error) {
 							buf.WriteString(", ")
 						}
 						keyIndex++
-						buf.WriteString(el.Key)
+						buf.WriteString(formatYAMLKey(el.Key))
 						buf.WriteString(": ")
 						buf.WriteString(formatYAMLValue(el.Value))
 					}
@@ -1489,4 +1506,41 @@ func deepCopyOrderedMap(src *orderedmapjson.AnyOrderedMap) *orderedmapjson.AnyOr
 		}
 	}
 	return dst
+}
+
+// formatYAMLKey formats a key for YAML flow-style objects, properly quoting when needed
+func formatYAMLKey(key string) string {
+	// Always quote empty keys
+	if key == "" {
+		return `""`
+	}
+
+	// Check for special YAML values that need quoting
+	switch key {
+	case "null", "true", "false", "yes", "no", "on", "off", "y", "n":
+		return fmt.Sprintf("%q", key)
+	}
+
+	// Check for special characters that require quoting
+	for _, r := range key {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+			return fmt.Sprintf("%q", key)
+		}
+	}
+
+	// Check if it starts with special characters that can't start unquoted keys
+	if len(key) > 0 {
+		first := key[0]
+		if first == '@' || first == '#' || first == '%' || first == '?' || first == '&' || first == '*' || first == '!' || first == '|' || first == '>' || first == '\'' || first == '"' || first == '`' || first == '[' || first == ']' || first == '{' || first == '}' || first == ',' || first == ':' || first == ' ' || first == '\t' {
+			return fmt.Sprintf("%q", key)
+		}
+	}
+
+	// Check if it contains special sequences that need quoting
+	if strings.Contains(key, ": ") || strings.Contains(key, " #") || strings.Contains(key, "?") || strings.Contains(key, "&") || strings.Contains(key, "*") || strings.Contains(key, "!") || strings.Contains(key, "|") || strings.Contains(key, ">") || strings.Contains(key, "'") || strings.Contains(key, "\"") || strings.Contains(key, "`") || strings.Contains(key, "[") || strings.Contains(key, "]") || strings.Contains(key, "{") || strings.Contains(key, "}") || strings.Contains(key, ",") {
+		return fmt.Sprintf("%q", key)
+	}
+
+	// No quoting needed
+	return key
 }
