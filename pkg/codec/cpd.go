@@ -1125,36 +1125,100 @@ func JSONLToCPD(r io.Reader) (string, error) {
 	type candidateScore struct {
 		field string
 		score float64
+		info  *relational.FieldInfo
+		stats *relational.ValueStats
 	}
 	var candidates []candidateScore
 	for field, score := range joinCandidates {
-		candidates = append(candidates, candidateScore{field, score})
+		info := fieldInfo[field]
+		stats := deriver.FieldStats[field]
+		if info != nil && stats != nil {
+			candidates = append(candidates, candidateScore{field, score, info, stats})
+		}
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].score > candidates[j].score
 	})
 
-	// Select top-scoring candidates for join tables
-	// Use adaptive threshold based on data characteristics
-	threshold := 0.4 // Base threshold
-	if len(candidates) > 0 {
-		// Adjust threshold based on the best candidate's score
-		bestScore := candidates[0].score
-		if bestScore > 0.7 {
-			threshold = 0.5 // Higher threshold for high-quality candidates
-		} else if bestScore < 0.5 {
-			threshold = 0.3 // Lower threshold for lower-quality candidates
-		}
-	}
-
+	// Smart join table selection with better filtering
 	for _, candidate := range candidates {
-		if candidate.score >= threshold {
-			info := fieldInfo[candidate.field]
-			// Additional validation: ensure it's a good candidate
-			if info != nil && info.ElementType == "string" && info.UniqueValues > 1 {
-				joinFields.Set(candidate.field, true)
-				columns = append(columns, candidate.field)
+		field := candidate.field
+		info := candidate.info
+		stats := candidate.stats
+		score := candidate.score
+
+		// Skip if not a string field
+		if info.ElementType != "string" {
+			continue
+		}
+
+		// Skip if too few unique values
+		if info.UniqueValues < 2 {
+			continue
+		}
+
+		// Calculate key metrics for decision making
+		uniqueRatio := float64(info.UniqueValues) / float64(info.TotalRecords)
+		reuseRatio := stats.ReuseRatio
+		maxFreq := stats.MaxFreq
+
+		// Reject fields that are essentially unique identifiers
+		// This catches cases like photos, IDs, timestamps, etc.
+		if uniqueRatio > 0.8 {
+			// If more than 80% of records have unique values, it's likely a unique identifier
+			continue
+		}
+
+		// For array fields, be extra conservative
+		if info.IsArray {
+			// Reject arrays where most values are unique
+			if uniqueRatio > 0.6 {
+				continue
 			}
+			// Reject arrays with very low reuse (like photos where each photo is unique)
+			if reuseRatio < 2.0 {
+				continue
+			}
+			// Reject arrays where no single value appears frequently
+			if maxFreq < 0.1 {
+				continue
+			}
+		}
+
+		// For scalar fields, use more nuanced criteria
+		if !info.IsArray {
+			// Reject fields with very high reuse ratios (likely unique identifiers)
+			if reuseRatio > 20.0 {
+				continue
+			}
+			// Reject fields where no value appears frequently enough
+			if maxFreq < 0.2 {
+				continue
+			}
+		}
+
+		// Use adaptive threshold based on field characteristics
+		threshold := 0.5 // Base threshold
+
+		// Adjust threshold based on field type and characteristics
+		if info.IsArray {
+			threshold = 0.6 // Higher threshold for arrays
+		}
+
+		// Adjust based on reuse characteristics
+		if reuseRatio > 10.0 {
+			threshold += 0.1 // Higher threshold for very high reuse
+		}
+
+		// Adjust based on uniqueness
+		if uniqueRatio > 0.5 {
+			threshold += 0.1 // Higher threshold for high uniqueness
+		}
+
+		// Only include if score meets the adaptive threshold
+		if score >= threshold {
+			joinFields.Set(field, true)
+			columns = append(columns, field)
 		}
 	}
 

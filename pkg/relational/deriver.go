@@ -3,6 +3,7 @@ package relational
 import (
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/GitRowin/orderedmapjson"
 )
@@ -80,11 +81,118 @@ type ValueStats struct {
 	Values           *orderedmapjson.AnyOrderedMap // Frequency of each value
 	IsArray          bool                          // Whether this is an array field
 	ElementType      string                        // For arrays: type of elements
+	Name             string
+	Entropy          float64
+	Gini             float64
+	MaxFreq          float64
+	ReuseRatio       float64
+	FinalScore       float64
+	Cardinality      float64
+}
+
+func ShouldPromoteToJoin(stats *ValueStats) bool {
+	if stats.TotalElements == 0 || stats.Values.Len() == 0 {
+		return false
+	}
+
+	// Early filter: skip arrays where no value is reused enough
+	if stats.IsArray {
+		reused := 0
+		for el := stats.Values.Front(); el != nil; el = el.Next() {
+			if count, ok := el.Value.(int); ok && count >= 3 {
+				reused++
+			}
+		}
+		if reused < 3 {
+			return false
+		}
+	}
+
+	// Additional cardinality cutoff for arrays
+	uniqueRatio := float64(stats.Values.Len()) / float64(stats.TotalElements)
+	if stats.IsArray && uniqueRatio > 0.95 {
+		return false
+	}
+
+	// Recompute score with adjusted weighting
+	invEntropy := 1.0 / (1.0 + stats.Entropy)
+	score := 0.1*invEntropy + 0.3*stats.Gini + 0.4*tanh(log1p(stats.ReuseRatio)) + 0.2*stats.MaxFreq
+	stats.FinalScore = score
+
+	return score > 0.6
+}
+
+func log1p(x float64) float64 {
+	return math.Log(1 + x)
+}
+
+func tanh(x float64) float64 {
+	ex := math.Exp(x)
+	enx := math.Exp(-x)
+	return (ex - enx) / (ex + enx)
+}
+
+func computeEntropy(m *orderedmapjson.AnyOrderedMap) float64 {
+	total := 0
+	for el := m.Front(); el != nil; el = el.Next() {
+		if count, ok := el.Value.(int); ok {
+			total += count
+		}
+	}
+	entropy := 0.0
+	for el := m.Front(); el != nil; el = el.Next() {
+		if count, ok := el.Value.(int); ok && count > 0 {
+			p := float64(count) / float64(total)
+			entropy -= p * math.Log2(p)
+		}
+	}
+	return entropy
+}
+
+func computeGini(m *orderedmapjson.AnyOrderedMap) float64 {
+	var counts []float64
+	for el := m.Front(); el != nil; el = el.Next() {
+		if count, ok := el.Value.(int); ok {
+			counts = append(counts, float64(count))
+		}
+	}
+	sort.Float64s(counts)
+	total := 0.0
+	for _, c := range counts {
+		total += c
+	}
+	if total == 0 {
+		return 0
+	}
+	acc := 0.0
+	for i, c := range counts {
+		acc += float64(i+1) * c
+	}
+	gini := 1.0 - (2.0*acc)/(float64(len(counts))*total) + (1.0 / float64(len(counts)))
+	return gini
+}
+
+func computeMaxFrequency(m *orderedmapjson.AnyOrderedMap, total int) float64 {
+	max := 0
+	for el := m.Front(); el != nil; el = el.Next() {
+		if count, ok := el.Value.(int); ok && count > max {
+			max = count
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(max) / float64(total)
+}
+
+func computeReuseRatio(m *orderedmapjson.AnyOrderedMap, total int) float64 {
+	return float64(total) / float64(m.Len())
 }
 
 // TableDeriver analyzes JSONL records to derive relational table structures
 type TableDeriver struct {
-	FieldStats map[string]*ValueStats // Stats for all fields
+	FieldStats map[string]*ValueStats
+	JoinFields map[string]bool
 }
 
 // NewTableDeriver creates a new TableDeriver instance
@@ -94,36 +202,30 @@ func NewTableDeriver() *TableDeriver {
 	}
 }
 
-// ProcessHistory analyzes a slice of records to identify potential join tables
 func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) error {
-	// First pass: collect statistics for all fields
 	for _, record := range history {
 		for el := record.Front(); el != nil; el = el.Next() {
 			field := el.Key
 			value := el.Value
 
-			// Skip special fields and empty fields
 			if len(field) == 0 || field[0] == '_' {
 				continue
 			}
 
-			// Initialize stats for this field if not exists
 			if _, exists := d.FieldStats[field]; !exists {
 				d.FieldStats[field] = &ValueStats{
+					Name:   field,
 					Values: orderedmapjson.NewAnyOrderedMap(),
 				}
 			}
 			stats := d.FieldStats[field]
 
-			// Handle arrays
 			if arr, ok := value.([]interface{}); ok {
 				stats.IsArray = true
 				stats.TotalOccurrences++
 				stats.TotalElements += len(arr)
 
-				// Only process if we haven't exceeded the limit
 				if stats.Values.Len() < MaxUniqueValues {
-					// Determine element type from first non-nil value
 					if stats.ElementType == "" && len(arr) > 0 {
 						for _, v := range arr {
 							if v != nil {
@@ -142,39 +244,50 @@ func (d *TableDeriver) ProcessHistory(history []*orderedmapjson.AnyOrderedMap) e
 						}
 					}
 
-					// Track values - handle nil values safely
 					for _, v := range arr {
 						if str, ok := v.(string); ok {
-							maybeCurrentLength, _ := stats.Values.Get(str)
-							currentLength := 0
-							if maybeCurrentLength != nil {
-								if count, ok := maybeCurrentLength.(int); ok {
-									currentLength = count
+							count := 0
+							if existing, _ := stats.Values.Get(str); existing != nil {
+								if c, ok := existing.(int); ok {
+									count = c
 								}
 							}
-							stats.Values.Set(str, currentLength+1)
+							stats.Values.Set(str, count+1)
 						}
 					}
 				}
 			} else if str, ok := value.(string); ok {
-				// Handle string fields
 				stats.TotalOccurrences++
-				stats.TotalElements++        // For string fields, this is the same as occurrences
-				stats.ElementType = "string" // Set element type for string fields
+				stats.TotalElements++
+				stats.ElementType = "string"
 				if stats.Values.Len() < MaxUniqueValues {
-					maybeCurrentLength, _ := stats.Values.Get(str)
-					currentLength := 0
-					if maybeCurrentLength != nil {
-						if count, ok := maybeCurrentLength.(int); ok {
-							currentLength = count
+					count := 0
+					if existing, _ := stats.Values.Get(str); existing != nil {
+						if c, ok := existing.(int); ok {
+							count = c
 						}
 					}
-					stats.Values.Set(str, currentLength+1)
+					stats.Values.Set(str, count+1)
 				}
 			}
 		}
 	}
 
+	for _, stats := range d.FieldStats {
+		if stats.Values.Len() == 0 {
+			continue
+		}
+		stats.Entropy = computeEntropy(stats.Values)
+		stats.Gini = computeGini(stats.Values)
+		stats.MaxFreq = computeMaxFrequency(stats.Values, stats.TotalElements)
+		stats.ReuseRatio = computeReuseRatio(stats.Values, stats.TotalOccurrences)
+		if ShouldPromoteToJoin(stats) {
+			if d.JoinFields == nil {
+				d.JoinFields = map[string]bool{}
+			}
+			d.JoinFields[stats.Name] = true
+		}
+	}
 	return nil
 }
 
@@ -273,9 +386,18 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 		// For strings (one-to-many), we weight concentration more heavily
 		var score float64
 		if stats.IsArray {
-			score = 0.3*inverseEntropy + 0.2*gini + 0.5*math.Tanh(math.Log(reuseRatio))
+			// For arrays, be more conservative - they're often unique identifiers
+			// Penalize high uniqueness (low inverse entropy) more heavily
+			// Weight reuse less heavily since arrays often have high reuse but low meaningful repetition
+			score = 0.2*inverseEntropy + 0.3*gini + 0.3*math.Tanh(math.Log(reuseRatio)) + 0.2*maxFreq
 		} else {
-			score = 0.4*inverseEntropy + 0.4*maxFreq + 0.2*math.Tanh(math.Log(reuseRatio))
+			// For scalar fields, focus on concentration and meaningful reuse
+			// Penalize very high reuse ratios (likely unique identifiers)
+			reusePenalty := 1.0
+			if reuseRatio > 10.0 {
+				reusePenalty = 10.0 / reuseRatio // Penalize extremely high reuse
+			}
+			score = 0.4*inverseEntropy + 0.4*maxFreq + 0.2*math.Tanh(math.Log(reuseRatio))*reusePenalty
 		}
 
 		// Only include if score is above threshold
@@ -336,9 +458,13 @@ func (d *TableDeriver) GetFieldInfo() map[string]*FieldInfo {
 
 		// Calculate score
 		if stats.IsArray {
-			fieldInfo.Score = 0.3*inverseEntropy + 0.2*gini + 0.5*math.Tanh(math.Log(reuseRatio))
+			fieldInfo.Score = 0.2*inverseEntropy + 0.3*gini + 0.3*math.Tanh(math.Log(reuseRatio)) + 0.2*maxFreq
 		} else {
-			fieldInfo.Score = 0.4*inverseEntropy + 0.4*maxFreq + 0.2*math.Tanh(math.Log(reuseRatio))
+			reusePenalty := 1.0
+			if reuseRatio > 10.0 {
+				reusePenalty = 10.0 / reuseRatio
+			}
+			fieldInfo.Score = 0.4*inverseEntropy + 0.4*maxFreq + 0.2*math.Tanh(math.Log(reuseRatio))*reusePenalty
 		}
 
 		// Categorize the field

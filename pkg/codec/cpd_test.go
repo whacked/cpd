@@ -1671,3 +1671,53 @@ data:
 
 	assert.Equal(t, want, yaml)
 }
+
+func TestJSONLToCPD_PhotoFieldNotJoinTable(t *testing.T) {
+	input := `{"time": "2019-03-13 08:04:30+0800", "entry": "胡椒餅 half", "photo": ["20190313_080346.jpg"], "category": "ingest", "device": "SM-N912"}
+{"time": "2019-03-13 08:19:36+0800", "entry": "抹茶紅豆 ijysheng", "photo": ["20190313_081745.jpg", "20190313_081929.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 08:32:00+0800", "entry": "蔬果同堂 krunchee-veg", "photo": ["20190313_083235.jpg", "20190313_083253.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 08:56:06+0800", "entry": "天ぷられんこんせんべい", "mass": "12g", "barcode": ["EAN_13:4990855064882"], "photo": ["20190313_085454.jpg", "20190313_085505.jpg"], "device": "SM-N910C"}
+{"time": "2019-03-13 10:53:35+0800", "entry": "rivon chocolate pineapple cake", "photo": ["20190313_105301.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 14:28:58+0800", "entry": "金芋雙喜", "photo": ["20190313_142727.jpg", "20190313_142828.jpg"], "category": "ingest", "device": "decoy123"}
+{"time": "2019-03-13 19:04:08+0800", "entry": "dinner food start", "photo": ["20190313_190341.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-13 21:51:48+0800", "entry": "御品圓 冰火湯圓", "photo": ["20190313_215022.jpg"], "device": "SM-N910C"}
+{"time": "2019-03-13 22:45:16+0800", "entry": "香瓜，canteloupe", "photo": ["20190313_224448.jpg"], "category": "ingest", "device": "fakefake"}
+{"time": "2019-03-14 07:05:00+0800", "entry": "光泉冷泡茶冰釀烏龍 clear the dt", "mass": "585g", "barcode": ["EAN_13:4710105062884"], "photo": ["20190314_071813.jpg", "20190314_071828.jpg"], "dt": "21s", "device": "SM-N910C"}
+{"time": "2019-03-14 08:35:15+0800", "entry": "banana", "photo": ["20190314_083356.jpg"], "category": "ingest", "device": "SM-N910C"}
+{"time": "2019-03-14 08:57:09+0800", "photo": ["20190314_085653.jpg"], "category": "blahblah", "device": "SM-N910C"}
+{"time": "2019-03-14 10:51:05+0800", "photo": ["20190314_105058.jpg"], "category": "foobar", "device": "SM-N910C"}
+{"time": "2019-03-14 10:53:28+0800", "photo": ["20190314_105317.jpg"], "category": "ingest", "device": "SM-N910C"}`
+
+	result, err := JSONLToCPD(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("JSONLToCPD failed: %v", err)
+	}
+
+	// Verify that photo is NOT in the columns (should be in payload)
+	if strings.Contains(result, "_columns: [time, photo") {
+		t.Errorf("photo should not be a join table column, but found in _columns")
+	}
+
+	// Verify that category and device ARE in the columns
+	if !strings.Contains(result, "_columns: [time, category, device, payload]") {
+		t.Errorf("expected category and device to be join table columns")
+	}
+
+	// Verify that photo appears in the payload section of the data
+	if !strings.Contains(result, "photo: [") {
+		t.Errorf("photo should appear in payload, but not found in data")
+	}
+
+	// Verify that category and device have join table definitions
+	if !strings.Contains(result, "category:\n") {
+		t.Errorf("category should have a join table definition")
+	}
+	if !strings.Contains(result, "device:\n") {
+		t.Errorf("device should have a join table definition")
+	}
+
+	// Verify that photo does NOT have a join table definition
+	if strings.Contains(result, "photo:\n") {
+		t.Errorf("photo should not have a join table definition")
+	}
+}
