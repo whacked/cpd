@@ -9,7 +9,7 @@ import * as fs from 'fs'
 import Ajv from 'ajv'
 import { isValidYamlFileContent } from './yamlFileApi';
 import { getDatabaseStatistics } from './database-api';
-import { generateSqlForDataTable } from '../tests/util';
+import { generateSqlForDataTable } from '../test/util';
 import { deriveSupersetSchema, deriveSupersetSchemaFromRollingSchemaData, IndexedSchemaRow, OrderPreservingObject, rollingSchemaDiscoverer } from './schema-tracking';
 import { parseLinesToStructureArray } from './jsonLinesFileApi';
 import { groupBy } from './extlib';
