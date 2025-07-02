@@ -443,7 +443,12 @@ func TestRoundTrip_JSONL_Stable(t *testing.T) {
 	}{
 		{
 			name:              "basic JSONL round-trip",
-			input:             `{"time":"2024-01-01","authors":["alice"],"foo":"bar"}`,
+			input:             `{"time":"2024-01-01","authors":["alice"],"foo":"bar","num":12,"numberString":"91"}`,
+			transformedOutput: "", // no change
+		},
+		{
+			name:              "basic JSONL round-trip with empty array",
+			input:             `{"time":"2024-01-01","authors":["alice"],"barcode":[]}`,
 			transformedOutput: "", // no change
 		},
 		/* NOTE: this implies we omit keys with null values. not sure this is a good idea.
@@ -1720,4 +1725,29 @@ func TestJSONLToCPD_PhotoFieldNotJoinTable(t *testing.T) {
 	if strings.Contains(result, "photo:\n") {
 		t.Errorf("photo should not have a join table definition")
 	}
+}
+
+func TestJSONLToCPD_JoinTableModes(t *testing.T) {
+	jsonl := `{"timestamp":"2024-01-01T00:00:00Z","category":"foo","device":"dev1","value":1}
+{"timestamp":"2024-01-01T01:00:00Z","category":"bar","device":"dev2","value":2}
+{"timestamp":"2024-01-01T02:00:00Z","category":"foo","device":"dev1","value":3}`
+
+	t.Run("auto-derive join tables", func(t *testing.T) {
+		cpd, err := JSONLToCPD(strings.NewReader(jsonl))
+		assert.NoError(t, err)
+		assert.Contains(t, cpd, "category:")
+		assert.Contains(t, cpd, "device:")
+		assert.Contains(t, cpd, "_columns: [timestamp, category, device, payload]")
+	})
+
+	t.Run("user-supplied join tables", func(t *testing.T) {
+		joinTables := map[string]map[string]int{
+			"device": {},
+		}
+		cpd, err := JSONLToCPDWithJoinTables(strings.NewReader(jsonl), joinTables)
+		assert.NoError(t, err)
+		assert.NotContains(t, cpd, "category:\n")
+		assert.Contains(t, cpd, "device:")
+		assert.Contains(t, cpd, "_columns: [timestamp, device, payload]")
+	})
 }

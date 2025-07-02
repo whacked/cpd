@@ -73,24 +73,28 @@ func ConvertNodeToOrderedMap(node *yaml.Node, result *orderedmapjson.AnyOrderedM
 			case yaml.SequenceNode:
 				// Handle arrays
 				var arr []interface{}
-				for _, item := range valueNode.Content {
-					switch item.Kind {
-					case yaml.ScalarNode:
-						arr = append(arr, item.Value)
-					case yaml.MappingNode:
-						nestedMap := orderedmapjson.NewAnyOrderedMap()
-						if err := ConvertNodeToOrderedMap(item, nestedMap); err != nil {
-							return err
-						}
-						arr = append(arr, nestedMap)
-					case yaml.SequenceNode:
-						var nestedArr []interface{}
-						for _, nestedItem := range item.Content {
-							if nestedItem.Kind == yaml.ScalarNode {
-								nestedArr = append(nestedArr, nestedItem.Value)
+				if len(valueNode.Content) == 0 {
+					arr = make([]interface{}, 0)
+				} else {
+					for _, item := range valueNode.Content {
+						switch item.Kind {
+						case yaml.ScalarNode:
+							arr = append(arr, item.Value)
+						case yaml.MappingNode:
+							nestedMap := orderedmapjson.NewAnyOrderedMap()
+							if err := ConvertNodeToOrderedMap(item, nestedMap); err != nil {
+								return err
 							}
+							arr = append(arr, nestedMap)
+						case yaml.SequenceNode:
+							var nestedArr []interface{}
+							for _, nestedItem := range item.Content {
+								if nestedItem.Kind == yaml.ScalarNode {
+									nestedArr = append(nestedArr, nestedItem.Value)
+								}
+							}
+							arr = append(arr, nestedArr)
 						}
-						arr = append(arr, nestedArr)
 					}
 				}
 				result.Set(key, arr)
