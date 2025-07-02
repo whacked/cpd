@@ -84,6 +84,7 @@ func main() {
 	jsonlPath := flag.String("jsonl", defaultJsonlPath, "Path to JSONL file")
 	metaYamlPath := flag.String("meta", defaultMetaYamlPath, "Path to meta version YAML file")
 	cpdFilePath := flag.String("cpd-file", "", "Path to CPD file (auto-detects format)")
+	joinTablesFlag := flag.String("join-tables", "", "Comma-separated list of fields to use as join tables")
 
 	// Parse flags
 	flag.Parse()
@@ -133,7 +134,23 @@ func main() {
 		fmt.Println(format)
 		if format == "jsonl" {
 			// Convert JSONL to YAML
-			yamlResult, err := codec.JSONLToCPD(strings.NewReader(string(fileData)))
+			var yamlResult string
+			if *joinTablesFlag != "" {
+				// Parse join tables from flag
+				joinTableFields := strings.Split(*joinTablesFlag, ",")
+				joinTables := make(map[string]map[string]int)
+				for _, field := range joinTableFields {
+					field = strings.TrimSpace(field)
+					if field != "" {
+						joinTables[field] = make(map[string]int)
+					}
+				}
+
+				yamlResult, err = codec.JSONLToCPDWithJoinTables(strings.NewReader(string(fileData)), joinTables)
+			} else {
+				yamlResult, err = codec.JSONLToCPD(strings.NewReader(string(fileData)))
+			}
+
 			if err != nil {
 				fmt.Printf("Error converting JSONL to YAML: %v\n", err)
 				os.Exit(1)
@@ -141,6 +158,9 @@ func main() {
 
 			fmt.Println("=== JSONL to YAML Conversion ===")
 			fmt.Printf("Detected format: %s\n", format)
+			if *joinTablesFlag != "" {
+				fmt.Printf("Using join tables: %s\n", *joinTablesFlag)
+			}
 			fmt.Println(yamlResult)
 		} else {
 			// Convert YAML to JSONL
