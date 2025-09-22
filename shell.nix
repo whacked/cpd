@@ -53,18 +53,11 @@ pkgs.mkShell {
   name = "yamdb-go";
 
   shellHook = ''
-    activate-node-env
-
-    alias test='jest --watch'
-
-    _CLI_PATH=$PWD/src/cli.ts
-    function sqlite-query() {
-      _input_file=$1
-      shift
+    sqlite-query() {
       if [ $# -eq 0 ]; then
-        sqlite3 -init <(tsx $_CLI_PATH --inputFile $_input_file --toSql) :memory:
+        sqlite3 -init <(go run asdf.go -cpd-file /dev/stdin -toSql) :memory:
       else
-        sqlite3 -init <(tsx $_CLI_PATH --inputFile $_input_file --toSql) :memory: "$*"
+        sqlite3 -init <(go run asdf.go -cpd-file "$1" -toSql) :memory:
       fi
     }
 
@@ -155,8 +148,6 @@ pkgs.mkShell {
       # It only processes files ending with .go
       grep -E -A 2 -r --include='*.go' '^\s*//.*|func ' .
     }
-
-    alias cli="tsx $_CLI_PATH"
   '' + ''
     export PATH=$PWD:$PATH
     #ensure-goenv $name

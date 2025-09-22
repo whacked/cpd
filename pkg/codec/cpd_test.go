@@ -1751,3 +1751,59 @@ func TestJSONLToCPD_JoinTableModes(t *testing.T) {
 		assert.Contains(t, cpd, "_columns: [timestamp, device, payload]")
 	})
 }
+
+func TestCPDToSQLite(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string // Expected SQL statements (partial matches)
+	}{
+		{
+			name: "basic CPD with join tables",
+			input: `_columns: [time, authors, topic, payload]
+authors:
+  alice: 1
+  bob: 2
+topic:
+  food: 1
+  recovery: 2
+data:
+  - ["2024-06-12T12:00:00Z", [1, 2], 1, {note: "ate natto"}]
+  - ["2024-06-13T13:30:00Z", 1, null, {note: "light snack"}]`,
+			want: []string{
+				"CREATE TABLE IF NOT EXISTS data",
+				"CREATE TABLE IF NOT EXISTS authors",
+				"CREATE TABLE IF NOT EXISTS topic",
+				"INSERT INTO authors",
+				"INSERT INTO topic",
+				"INSERT INTO data",
+			},
+		},
+		{
+			name: "simple CPD without join tables",
+			input: `_columns: [time, message, payload]
+data:
+  - ["2024-06-12T12:00:00Z", "hello world", {note: "test"}]`,
+			want: []string{
+				"CREATE TABLE IF NOT EXISTS data",
+				"INSERT INTO data",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sql, err := CPDToSQLite(strings.NewReader(tt.input))
+			assert.NoError(t, err)
+			
+			// Check that all expected SQL statements are present
+			for _, expected := range tt.want {
+				assert.Contains(t, sql, expected)
+			}
+			
+			// Basic validation - should contain CREATE and INSERT statements
+			assert.Contains(t, sql, "CREATE TABLE")
+			assert.Contains(t, sql, "INSERT INTO")
+		})
+	}
+}

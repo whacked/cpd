@@ -85,9 +85,35 @@ func main() {
 	metaYamlPath := flag.String("meta", defaultMetaYamlPath, "Path to meta version YAML file")
 	cpdFilePath := flag.String("cpd-file", "", "Path to CPD file (auto-detects format)")
 	joinTablesFlag := flag.String("join-tables", "", "Comma-separated list of fields to use as join tables")
+	toSqlFlag := flag.Bool("toSql", false, "Convert CPD file to SQLite statements")
 
 	// Parse flags
 	flag.Parse()
+
+	// Handle toSql flag - this takes precedence over demo type
+	if *toSqlFlag {
+		if *cpdFilePath == "" {
+			fmt.Println("Error: -cpd-file flag is required for -toSql")
+			os.Exit(1)
+		}
+
+		// Read file
+		fileData, err := os.ReadFile(*cpdFilePath)
+		if err != nil {
+			fmt.Printf("Error reading file: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Convert to SQLite
+		sql, err := codec.CPDToSQLite(strings.NewReader(string(fileData)))
+		if err != nil {
+			fmt.Printf("Error converting to SQLite: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Print(sql)
+		return
+	}
 
 	// Validate demo type
 	if *demoType == "" {
@@ -98,6 +124,8 @@ func main() {
 		fmt.Println("  json2yaml - Run JSON to YAML conversion demo")
 		fmt.Println("  meta     - Run meta version demo")
 		fmt.Println("  cpd      - Run CPD conversion demo (requires -cpd-file)")
+		fmt.Println("")
+		fmt.Println("Or use -toSql with -cpd-file to convert CPD to SQLite statements")
 		os.Exit(1)
 	}
 

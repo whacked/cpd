@@ -1626,6 +1626,63 @@ func deepCopyOrderedMap(src *orderedmapjson.AnyOrderedMap) *orderedmapjson.AnyOr
 	return dst
 }
 
+// CPDToSQLite converts a CPD YAML file to SQLite DDL and INSERT statements
+func CPDToSQLite(r io.Reader) (string, error) {
+	// Parse CPD document
+	doc, err := ParseCPD(r)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse CPD: %w", err)
+	}
+
+	// Convert CPD to field info format expected by relational package
+	fieldInfo := make(map[string]*relational.FieldInfo)
+	
+	// Process columns and join tables
+	for _, col := range doc.Columns {
+		if col == "payload" {
+			// Skip payload - it will be stored as JSON
+			continue
+		}
+		
+		// Determine field category based on whether it has a join table
+		category := relational.FieldCategoryUnique
+		if _, hasJoinTable := doc.JoinTables[col]; hasJoinTable {
+			category = relational.FieldCategoryOneToMany
+		}
+		
+		// Determine element type
+		elementType := "string"
+		if col == "time" || col == "timestamp" {
+			elementType = "string" // Keep as string for timestamps
+		}
+		
+		fieldInfo[col] = &relational.FieldInfo{
+			Name:        col,
+			ElementType: elementType,
+			Category:    category,
+			IsArray:     false, // CPD columns are typically scalar
+			// Other fields will be set to defaults since we don't have stats
+		}
+	}
+
+	// Generate DDL
+	ddl := relational.GenerateSQLiteDDL(fieldInfo, "data")
+	
+	// Convert CPD data to format expected by GenerateSQLiteInserts
+	var records []*orderedmapjson.AnyOrderedMap
+	for _, row := range doc.Data {
+		records = append(records, row.Values)
+	}
+	
+	// Generate INSERT statements
+	inserts, err := relational.GenerateSQLiteInserts(fieldInfo, records)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate inserts: %w", err)
+	}
+	
+	return ddl + "\n" + inserts, nil
+}
+
 // formatYAMLKey formats a key for YAML flow-style objects, properly quoting when needed
 func formatYAMLKey(key string) string {
 	// Always quote empty keys
