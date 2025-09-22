@@ -18,6 +18,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ArraySeparator controls the separator used between array items
+var ArraySeparator = ","
+
 // CPDRow represents a single row in the CPD format
 type CPDRow struct {
 	Values *orderedmapjson.AnyOrderedMap // Structured values matching _columns
@@ -1502,14 +1505,12 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 	}
 
 	// Add columns section
-	buf.WriteString("_columns: [")
-	for i, col := range columns {
-		if i > 0 {
-			buf.WriteString(",")
-		}
-		buf.WriteString(col)
+	buf.WriteString("_columns:\n")
+	for _, col := range columns {
+		buf.WriteString("  - ")
+		buf.WriteString(formatYAMLKey(col))
+		buf.WriteString("\n")
 	}
-	buf.WriteString("]\n")
 
 	// Add join tables
 	for el := joinFields.Front(); el != nil; el = el.Next() {
@@ -1542,7 +1543,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 
 		for i, val := range rowArray {
 			if i > 0 {
-				buf.WriteString(", ")
+				buf.WriteString(ArraySeparator)
 			}
 
 			switch v := val.(type) {
@@ -1554,7 +1555,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 				buf.WriteString("[")
 				for j, elem := range v {
 					if j > 0 {
-						buf.WriteString(", ")
+						buf.WriteString(ArraySeparator)
 					}
 					switch e := elem.(type) {
 					case int:
@@ -1574,6 +1575,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 					keyIndex := 0
 					for el := v.Front(); el != nil; el = el.Next() {
 						if keyIndex > 0 {
+							// consistent spacing inside object for readability
 							buf.WriteString(", ")
 						}
 						keyIndex++

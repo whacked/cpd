@@ -7,8 +7,3 @@ schemas: src/autogen/schemas/YamlFile.tagged.schema.json
 src/autogen/schemas/YamlFile.tagged.schema.json: templates/schemas/YamlFile.tagged.schema.jsonnet
 	$(call render_jsonnet, $<, $@)
 
-# compile js output for external consumption
-dist:
-	tsc
-
-.PHONY: dist
