@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/GitRowin/orderedmapjson"
+	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/whacked/yamdb/pkg/io/yamlutil"
 	"github.com/whacked/yamdb/pkg/relational"
 	"gopkg.in/yaml.v3"
@@ -39,6 +40,7 @@ type CPDDocument struct {
 	Data       []*CPDRow
 	Meta       *orderedmapjson.AnyOrderedMap
 	Version    string
+	Schemas    map[string]*orderedmapjson.AnyOrderedMap // table name -> schema
 }
 
 // ParseCPD parses a CPD YAML document into a CPDDocument
@@ -51,6 +53,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 	doc := &CPDDocument{
 		JoinTables: make(map[string]*JoinTable),
 		Meta:       orderedmapjson.NewAnyOrderedMap(),
+		Schemas:    nil, // Will be initialized only if schemas are found
 	}
 
 	// Find root mapping node
@@ -75,6 +78,28 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 	// Parse version
 	if versionNode := findNodeByKey(root, "_version"); versionNode != nil {
 		doc.Version = versionNode.Value
+	}
+
+	// Parse schemas
+	if schemasNode := findNodeByKey(root, "_schemas"); schemasNode != nil {
+		if schemasNode.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("_schemas must be a mapping")
+		}
+		// Initialize schemas map only when schemas are found
+		doc.Schemas = make(map[string]*orderedmapjson.AnyOrderedMap)
+		for i := 0; i < len(schemasNode.Content); i += 2 {
+			if i+1 >= len(schemasNode.Content) {
+				break
+			}
+			tableName := schemasNode.Content[i].Value
+			schemaNode := schemasNode.Content[i+1]
+
+			schemaMap := orderedmapjson.NewAnyOrderedMap()
+			if err := yamlutil.ConvertNodeToOrderedMap(schemaNode, schemaMap); err != nil {
+				return nil, fmt.Errorf("failed to convert schema for table %s: %w", tableName, err)
+			}
+			doc.Schemas[tableName] = schemaMap
+		}
 	}
 
 	// Parse join tables
@@ -280,8 +305,9 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 						return nil, fmt.Errorf("unsupported payload node kind in row %d: %v", j, val.Kind)
 					}
 				} else {
-					// Regular scalar column
-					cpdRow.Values.Set(colName, val.Value)
+					// Regular scalar column - convert based on YAML tag
+					convertedValue := convertYAMLNodeToGoValue(val)
+					cpdRow.Values.Set(colName, convertedValue)
 				}
 			}
 
@@ -289,6 +315,11 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 		}
 	} else {
 		return nil, fmt.Errorf("missing required data section")
+	}
+
+	// Validate data against schema if present
+	if err := doc.validateDataAgainstSchema(); err != nil {
+		return nil, err
 	}
 
 	return doc, nil
@@ -544,6 +575,7 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		Data:       []*CPDRow{},
 		Meta:       orderedmapjson.NewAnyOrderedMap(),
 		Version:    "",
+		Schemas:    make(map[string]*orderedmapjson.AnyOrderedMap),
 	}
 	// Version
 	if versionNode := findNodeByKey(&node, "_version"); versionNode != nil {
@@ -585,6 +617,25 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		copy(doc.Columns, prevColumns)
 	} else {
 		return nil, fmt.Errorf("missing required _columns")
+	}
+	// Schemas
+	if schemasNode := findNodeByKey(&node, "_schemas"); schemasNode != nil {
+		if schemasNode.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("_schemas must be a mapping")
+		}
+		for i := 0; i < len(schemasNode.Content); i += 2 {
+			if i+1 >= len(schemasNode.Content) {
+				break
+			}
+			tableName := schemasNode.Content[i].Value
+			schemaNode := schemasNode.Content[i+1]
+			
+			schemaMap := orderedmapjson.NewAnyOrderedMap()
+			if err := yamlutil.ConvertNodeToOrderedMap(schemaNode, schemaMap); err != nil {
+				return nil, fmt.Errorf("failed to convert schema for table %s: %w", tableName, err)
+			}
+			doc.Schemas[tableName] = schemaMap
+		}
 	}
 	// Join tables
 	for i := 0; node.Content != nil && i < len(node.Content[0].Content); i += 2 {
@@ -692,6 +743,12 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		}
 		doc.Data = append(doc.Data, row)
 	}
+	
+	// Validate data against schema if present
+	if err := doc.validateDataAgainstSchema(); err != nil {
+		return nil, err
+	}
+	
 	return doc, nil
 }
 
@@ -757,10 +814,16 @@ func parseDataRow(line string, columns []string, joinTables map[string]*JoinTabl
 		colName := columns[colIdx]
 		valStr := values[colIdx]
 		joinTable, isJoin := joinTables[colName]
-		val, err := parseValue(valStr, joinTable, isJoin)
+		val, err := ParseValue(valStr, joinTable, isJoin)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing column %s: %w", colName, err)
 		}
+		
+		// Debug logging
+		if colName == "temperature" {
+			fmt.Printf("DEBUG: %s -> valStr: %s, isJoin: %v, val: %v (type: %T)\n", colName, valStr, isJoin, val, val)
+		}
+		
 		if colName == "payload" && val != nil {
 			// Flatten payload fields
 			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
@@ -785,7 +848,7 @@ func parseDataRow(line string, columns []string, joinTables map[string]*JoinTabl
 }
 
 // parseValue parses a single value from a data row
-func parseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, error) {
+func ParseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, error) {
 	valStr = strings.TrimSpace(valStr)
 
 	// Handle null
@@ -1681,6 +1744,122 @@ func CPDToSQLite(r io.Reader) (string, error) {
 	}
 	
 	return ddl + "\n" + inserts, nil
+}
+
+// validateDataAgainstSchema validates the data against the specified schema
+func (d *CPDDocument) validateDataAgainstSchema() error {
+	if d.Schemas == nil {
+		return nil // No schemas to validate against
+	}
+
+	// Look for a "data" schema
+	dataSchema, hasDataSchema := d.Schemas["data"]
+	if !hasDataSchema {
+		return nil // No data schema to validate against
+	}
+
+	// Convert schema to JSON for validation
+	schemaJSON, err := json.Marshal(dataSchema)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	// Compile the schema
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("schema.json", strings.NewReader(string(schemaJSON))); err != nil {
+		return fmt.Errorf("failed to add schema resource: %w", err)
+	}
+
+	schema, err := compiler.Compile("schema.json")
+	if err != nil {
+		return fmt.Errorf("failed to compile schema: %w", err)
+	}
+
+	// Convert data to the format expected by the schema
+	// We need to expand join table IDs back to names for validation
+	var dataForValidation []interface{}
+	for _, row := range d.Data {
+		// Convert CPD row to a map for validation, expanding join table IDs
+		rowMap := make(map[string]interface{})
+		for el := row.Values.Front(); el != nil; el = el.Next() {
+			key := el.Key
+			value := el.Value
+			
+			// Check if this is a join table field and expand the ID to name
+			if joinTable, isJoin := d.JoinTables[key]; isJoin && joinTable != nil {
+				switch v := value.(type) {
+				case int:
+					if name, exists := joinTable.IDToName[v]; exists {
+						rowMap[key] = name
+					} else {
+						rowMap[key] = value // Keep original value if ID not found
+					}
+				case []interface{}:
+					// Handle array of IDs
+					var names []interface{}
+					for _, item := range v {
+						if id, ok := item.(int); ok {
+							if name, exists := joinTable.IDToName[id]; exists {
+								names = append(names, name)
+							} else {
+								names = append(names, item) // Keep original value if ID not found
+							}
+						} else {
+							names = append(names, item)
+						}
+					}
+					rowMap[key] = names
+				default:
+					rowMap[key] = value
+				}
+			} else {
+				rowMap[key] = value
+			}
+		}
+		dataForValidation = append(dataForValidation, rowMap)
+	}
+
+	// Validate the data
+	if err := schema.Validate(dataForValidation); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// convertYAMLNodeToGoValue converts a YAML scalar node to the appropriate Go type
+func convertYAMLNodeToGoValue(node *yaml.Node) interface{} {
+	if node.Kind != yaml.ScalarNode {
+		return node.Value
+	}
+	
+	switch node.Tag {
+	case "!!null":
+		return nil
+	case "!!bool":
+		if node.Value == "true" {
+			return true
+		}
+		return false
+	case "!!int":
+		if i, err := strconv.Atoi(node.Value); err == nil {
+			return i
+		}
+		return node.Value
+	case "!!float":
+		if f, err := strconv.ParseFloat(node.Value, 64); err == nil {
+			return f
+		}
+		return node.Value
+	case "!!str":
+		return node.Value
+	default:
+		// For unknown tags, try to parse as number first, then default to string
+		if f, err := strconv.ParseFloat(node.Value, 64); err == nil {
+			return f
+		}
+		return node.Value
+	}
 }
 
 // formatYAMLKey formats a key for YAML flow-style objects, properly quoting when needed

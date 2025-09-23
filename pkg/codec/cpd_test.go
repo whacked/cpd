@@ -1807,3 +1807,246 @@ data:
 		})
 	}
 }
+
+func TestCPD_SchemaValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid data with schema",
+			input: `_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: number
+        status:
+          type: [string, "null"]
+      required: [name, temperature]
+_columns: [name, temperature, status]
+status:
+  ok: 1
+  fail: 2
+data:
+  - ["alpha-1", 22.5, 1]
+  - ["alpha-2", 23.0, 1]
+  - ["beta-1", 19.8, 2]`,
+			wantErr: false,
+		},
+		{
+			name: "missing required field",
+			input: `_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: number
+      required: [name, temperature]
+_columns: [name, temperature, status]
+data:
+  - ["alpha-1", null, 1]`,
+			wantErr: true,
+			errMsg:  "validation failed",
+		},
+		{
+			name: "invalid type",
+			input: `_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: number
+      required: [name, temperature]
+_columns: [name, temperature, status]
+data:
+  - ["alpha-1", "not-a-number", 1]`,
+			wantErr: true,
+			errMsg:  "validation failed",
+		},
+		{
+			name: "valid with null values",
+			input: `_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: [number, "null"]
+        status:
+          type: [string, "null"]
+      required: [name]
+_columns: [name, temperature, status]
+data:
+  - ["alpha-1", null, null]
+  - ["alpha-2", 23.0, "ok"]`,
+			wantErr: false,
+		},
+		{
+			name: "no schema - should not validate",
+			input: `_columns: [name, temperature, status]
+data:
+  - ["alpha-1", "invalid", 1]`,
+			wantErr: false, // No validation without schema
+		},
+		{
+			name: "multi-document with schema propagation",
+			input: `---
+_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: number
+      required: [name, temperature]
+_columns: [name, temperature]
+data:
+  - ["alpha-1", 22.5]
+---
+data:
+  - ["alpha-2", 23.0]`,
+			wantErr: false,
+		},
+		{
+			name: "missing required field",
+			input: `_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: number
+      required: [name, temperature]
+_columns: [name, temperature]
+data:
+  - ["alpha-1", 22.5]
+  - ["alpha-2"]`,
+			wantErr: true,
+			errMsg:  "validation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc, err := ParseCPD(strings.NewReader(tt.input))
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, doc)
+			}
+		})
+	}
+}
+
+func TestCPD_SchemaParsing(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantSchemas map[string]bool // table name -> exists
+	}{
+		{
+			name: "basic schema parsing",
+			input: `_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        temperature:
+          type: number
+_columns: [name, temperature]
+data:
+  - ["alpha-1", 22.5]`,
+			wantSchemas: map[string]bool{
+				"data": true,
+			},
+		},
+		{
+			name: "multiple schemas",
+			input: `_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+  metadata:
+    type: object
+    properties:
+      version:
+        type: string
+_columns: [name, temperature]
+data:
+  - ["alpha-1", 22.5]`,
+			wantSchemas: map[string]bool{
+				"data":     true,
+				"metadata": true,
+			},
+		},
+		{
+			name: "no schemas",
+			input: `_columns: [name, temperature]
+data:
+  - ["alpha-1", 22.5]`,
+			wantSchemas: map[string]bool{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc, err := ParseCPD(strings.NewReader(tt.input))
+			assert.NoError(t, err)
+			assert.NotNil(t, doc)
+
+			// Check schema parsing
+			for tableName, shouldExist := range tt.wantSchemas {
+				if shouldExist {
+					assert.NotNil(t, doc.Schemas)
+					assert.Contains(t, doc.Schemas, tableName)
+				} else {
+					if doc.Schemas != nil {
+						assert.NotContains(t, doc.Schemas, tableName)
+					}
+				}
+			}
+			
+			// If no schemas expected, ensure doc.Schemas is either nil or empty
+			if len(tt.wantSchemas) == 0 {
+				if doc.Schemas != nil {
+					assert.Empty(t, doc.Schemas)
+				}
+			}
+		})
+	}
+}
