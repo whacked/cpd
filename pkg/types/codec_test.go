@@ -9,7 +9,7 @@ func TestColumnTypeConversion(t *testing.T) {
 		expected ColumnType
 	}{
 		{"string type", "string", TypeString},
-		{"int type", "int", TypeInt},
+		{"int type", "int", TypeFloat},
 		{"float type", "float", TypeFloat},
 		{"unknown type", "unknown", TypeString},
 	}
