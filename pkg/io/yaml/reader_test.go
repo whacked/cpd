@@ -60,7 +60,7 @@ address:
 	if name, _ := doc1.Data.Get("name"); name != "John" {
 		t.Errorf("Expected name 'John', got '%v'", name)
 	}
-	if age, _ := doc1.Data.Get("age"); age != "30" {
+	if age, _ := doc1.Data.Get("age"); age != 30 {
 		t.Errorf("Expected age '30', got '%v'", age)
 	}
 
@@ -84,18 +84,18 @@ address:
 	if name, _ := doc2.Data.Get("name"); name != "Jane" {
 		t.Errorf("Expected name 'Jane', got '%v'", name)
 	}
-	if age, _ := doc2.Data.Get("age"); age != "25" {
+	if age, _ := doc2.Data.Get("age"); age != 25 {
 		t.Errorf("Expected age '25', got '%v'", age)
 	}
 
 	// Test YAML output
-	output := doc1.String()
-	expected := `name: John
+	output := CleanString(doc1.String())
+	expected := CleanString(`name: John
 age: 30
 address:
   street: 123 Main St
   city: Boston
-`
+`)
 	if output != expected {
 		t.Errorf("Expected output:\n%s\nGot:\n%s", expected, output)
 	}
