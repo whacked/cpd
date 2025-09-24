@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/GitRowin/orderedmapjson"
-	"github.com/whacked/yamdb/pkg/io/jsonl"
 )
 
 func CleanString(s string) string {
@@ -184,8 +183,8 @@ func (w *Writer) writeDataItem(item interface{}) error {
 func (w *Writer) formatValue(buf *strings.Builder, val interface{}) error {
 	switch v := val.(type) {
 	case *orderedmapjson.AnyOrderedMap:
-		// Use OrderedMapToJSONL for map formatting
-		buf.WriteString(jsonl.OrderedMapToJSONL(v))
+		// Use YAML flow style for map formatting
+		buf.WriteString(w.formatYAMLFlowMap(v))
 
 	case []interface{}:
 		buf.WriteString("[")
@@ -235,4 +234,36 @@ func (w *Writer) formatScalar(s string) string {
 		return strconv.Quote(s)
 	}
 	return s
+}
+
+// formatYAMLFlowMap formats an ordered map in YAML flow style (e.g. {key: value, key2: value2})
+func (w *Writer) formatYAMLFlowMap(m *orderedmapjson.AnyOrderedMap) string {
+	var buf strings.Builder
+	buf.WriteString("{")
+
+	first := true
+	for el := m.Front(); el != nil; el = el.Next() {
+		if !first {
+			buf.WriteString(", ")
+		}
+		first = false
+
+		// Format key (unquoted when safe)
+		key := el.Key
+		if w.options.QuoteStrings || needsQuoting(key) {
+			buf.WriteString(strconv.Quote(key))
+		} else {
+			buf.WriteString(key)
+		}
+		buf.WriteString(": ")
+
+		// Format value recursively
+		if err := w.formatValue(&buf, el.Value); err != nil {
+			// If there's an error, fall back to string representation
+			buf.WriteString(fmt.Sprintf("%v", el.Value))
+		}
+	}
+
+	buf.WriteString("}")
+	return buf.String()
 }
