@@ -19,14 +19,20 @@ func TestSupplantRecord(t *testing.T) {
 				t.Fatalf("Failed to parse input record: %v", err)
 			}
 
-			// Create current schema from start schema
-			current := types.ValuesWithColumns{
-				Values:  make([]interface{}, len(tc.StartSchema)),
-				Columns: tc.StartSchema,
+			// Create current record group from start schema
+			var currentGroup *types.RecordGroup
+			if len(tc.StartSchema) > 0 {
+				currentGroup = &types.RecordGroup{
+					Columns:    tc.StartSchema,
+					Records:    []types.ValuesWithColumns{}, // Empty records, just schema
+					StartIndex: 0,
+				}
+			} else {
+				currentGroup = nil // For empty schema cases
 			}
 
 			// Call SupplantRecord with parsed values
-			got, gotSchema, changed, err := SupplantRecord(current, parsed)
+			got, gotSchema, changed, err := SupplantRecord(currentGroup, parsed)
 			if err != nil {
 				t.Fatalf("SupplantRecord() error = %v", err)
 			}
