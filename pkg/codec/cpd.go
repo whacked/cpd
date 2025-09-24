@@ -20,7 +20,7 @@ import (
 )
 
 // ArraySeparator controls the separator used between array items
-var ArraySeparator = ","
+var ArraySeparator = ", "
 
 // CPDRow represents a single row in the CPD format
 type CPDRow struct {
@@ -1062,7 +1062,7 @@ func formatYAMLValue(v interface{}) string {
 		b.WriteString("[")
 		for i, elem := range val {
 			if i > 0 {
-				b.WriteString(", ")
+				b.WriteString(",")
 			}
 			switch e := elem.(type) {
 			case string:
@@ -1283,6 +1283,10 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 			}
 		}
 		sort.Slice(candidates, func(i, j int) bool {
+			if candidates[i].score == candidates[j].score {
+				// Use alphabetical order as tiebreaker for deterministic results
+				return candidates[i].field < candidates[j].field
+			}
 			return candidates[i].score > candidates[j].score
 		})
 
@@ -1568,12 +1572,14 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 	}
 
 	// Add columns section
-	buf.WriteString("_columns:\n")
-	for _, col := range columns {
-		buf.WriteString("  - ")
+	buf.WriteString("_columns: [")
+	for i, col := range columns {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
 		buf.WriteString(formatYAMLKey(col))
-		buf.WriteString("\n")
 	}
+	buf.WriteString("]\n")
 
 	// Add join tables
 	for el := joinFields.Front(); el != nil; el = el.Next() {
