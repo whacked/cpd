@@ -80,17 +80,20 @@ func TestMetaPropagation(t *testing.T) {
 	fmt.Println(strings.NewReader(input))
 
 	// Process first record (meta)
-	metaRecord := &orderedmapjson.AnyOrderedMap{}
-	meta := &orderedmapjson.AnyOrderedMap{}
+	metaRecord := orderedmapjson.NewAnyOrderedMap()
+	meta := orderedmapjson.NewAnyOrderedMap()
 	meta.Set("location", "lab1")
 	metaRecord.Set("_meta", meta)
 	record, err := processor.ProcessRecord(metaRecord)
 	assert.NoError(t, err)
+	if processor.Meta == nil {
+		t.Fatal("processor.Meta is nil")
+	}
 	location, _ := processor.Meta.Get("location")
 	assert.Equal(t, "lab1", location)
 
 	// Process second record (should inherit meta)
-	dataRecord := &orderedmapjson.AnyOrderedMap{}
+	dataRecord := orderedmapjson.NewAnyOrderedMap()
 	dataRecord.Set("name", "beta-1")
 	dataRecord.Set("temperature", 28.4)
 	dataRecord.Set("status", "warn")
@@ -100,7 +103,7 @@ func TestMetaPropagation(t *testing.T) {
 	assert.Equal(t, "lab1", location)
 
 	// Process third record (should still have meta)
-	dataRecord2 := &orderedmapjson.AnyOrderedMap{}
+	dataRecord2 := orderedmapjson.NewAnyOrderedMap()
 	dataRecord2.Set("name", "beta-2")
 	dataRecord2.Set("temperature", 29.1)
 	dataRecord2.Set("status", "ok")
@@ -125,7 +128,7 @@ func TestSchemaInference(t *testing.T) {
 
 	// Process records
 	for _, line := range strings.Split(input, "\n") {
-		record := &orderedmapjson.AnyOrderedMap{}
+		record := orderedmapjson.NewAnyOrderedMap()
 		record.Set("name", strings.Split(line, ",")[0])
 		record.Set("temperature", 22.5)
 		record.Set("status", "ok")
@@ -162,11 +165,19 @@ func TestJoinTableInference(t *testing.T) {
 	fmt.Println(reader)
 
 	// Process records
-	for _, line := range strings.Split(input, "\n") {
+	for i, line := range strings.Split(input, "\n") {
 		fmt.Println(line)
-		record := &orderedmapjson.AnyOrderedMap{}
-		record.Set("status", "on")
-		record.Set("time", 1)
+		record := orderedmapjson.NewAnyOrderedMap()
+		if i == 0 {
+			record.Set("status", "on")
+			record.Set("time", 1)
+		} else if i == 1 {
+			record.Set("status", "off")
+			record.Set("time", 2)
+		} else if i == 2 {
+			record.Set("status", "on")
+			record.Set("time", 3)
+		}
 		result, err := processor.ProcessRecord(record)
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -199,8 +210,8 @@ func TestRoundTripConversion(t *testing.T) {
 	// Process records
 	for _, line := range strings.Split(input, "\n") {
 		fmt.Println(line)
-		record := &orderedmapjson.AnyOrderedMap{}
-		meta := &orderedmapjson.AnyOrderedMap{}
+		record := orderedmapjson.NewAnyOrderedMap()
+		meta := orderedmapjson.NewAnyOrderedMap()
 		meta.Set("location", "lab1")
 		record.Set("_meta", meta)
 		record.Set("name", "beta-1")

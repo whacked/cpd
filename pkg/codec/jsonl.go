@@ -23,6 +23,9 @@ import (
 
 // RecursiveMerge merges newMap into oldMap, recursively handling nested maps
 func RecursiveMergeOrderedMaps(oldMap *orderedmapjson.AnyOrderedMap, newMap *orderedmapjson.AnyOrderedMap) {
+	if oldMap == nil || newMap == nil {
+		return // Skip if either map is nil
+	}
 
 	for el := newMap.Front(); el != nil; el = el.Next() {
 		oldVal, exists := oldMap.Get(el.Key)
@@ -277,6 +280,8 @@ type JSONLProcessor struct {
 	OrderedColumns []types.ColumnInfo // Maintains the order of columns as they appear in records
 	// Join tables for enum-like fields
 	JoinTables map[string]map[string]int // field name -> value -> id
+	// String values tracking for enum inference
+	StringValues map[string]map[string]bool // field name -> set of values
 }
 
 // NewJSONLProcessor creates a new JSONL processor
@@ -287,6 +292,7 @@ func NewJSONLProcessor() *JSONLProcessor {
 		CurrentIndex:   -1,
 		OrderedColumns: make([]types.ColumnInfo, 0),
 		JoinTables:     make(map[string]map[string]int),
+		StringValues:   make(map[string]map[string]bool),
 	}
 
 	// Create and initialize category processors
@@ -424,11 +430,117 @@ func (p *JSONLProcessor) updateOrderedColumns(record *orderedmapjson.AnyOrderedM
 	p.OrderedColumns = newColumns
 }
 
+// updateSchemaInference builds and updates a JSON schema based on processed records
+func (p *JSONLProcessor) updateSchemaInference(record *orderedmapjson.AnyOrderedMap) {
+	if record == nil {
+		return
+	}
+
+	// Skip if record has special keys
+	if _, ok := record.Get("_meta"); ok {
+		return
+	}
+	if _, ok := record.Get("_schema"); ok {
+		return
+	}
+	if _, ok := record.Get("_version"); ok {
+		return
+	}
+
+	// Initialize schema if not exists
+	if p.Schema == nil {
+		p.Schema = map[string]interface{}{
+			"type": "object",
+			"properties": make(map[string]interface{}),
+			"required": []string{},
+		}
+	}
+
+	schema := p.Schema.(map[string]interface{})
+	properties := schema["properties"].(map[string]interface{})
+	required := schema["required"].([]string)
+
+	// Process each field in the record
+	for el := record.Front(); el != nil; el = el.Next() {
+		fieldName := el.Key
+		fieldValue := el.Value
+
+		// Track string values for enum detection
+		if strValue, ok := fieldValue.(string); ok {
+			if p.StringValues[fieldName] == nil {
+				p.StringValues[fieldName] = make(map[string]bool)
+			}
+			p.StringValues[fieldName][strValue] = true
+		}
+
+		// Determine JSON schema type
+		var fieldType string
+		switch fieldValue.(type) {
+		case string:
+			fieldType = "string"
+		case int, int64, float32, float64:
+			fieldType = "number"
+		case bool:
+			fieldType = "boolean"
+		case nil:
+			fieldType = "null"
+		default:
+			fieldType = "string"
+		}
+
+		// Add to properties if not exists or update if needed
+		if _, exists := properties[fieldName]; !exists {
+			properties[fieldName] = map[string]interface{}{
+				"type": fieldType,
+			}
+		}
+
+		// Check if this string field should become an enum
+		if fieldType == "string" {
+			if values, exists := p.StringValues[fieldName]; exists && len(values) > 1 {
+				// Convert to enum if we have multiple distinct values
+				enumValues := make([]interface{}, 0, len(values))
+				for value := range values {
+					enumValues = append(enumValues, value)
+				}
+				properties[fieldName] = map[string]interface{}{
+					"type": "string",
+					"enum": enumValues,
+				}
+			}
+		}
+
+		// Add to required if not already there
+		isRequired := false
+		for _, req := range required {
+			if req == fieldName {
+				isRequired = true
+				break
+			}
+		}
+		if !isRequired {
+			required = append(required, fieldName)
+			schema["required"] = required
+		}
+	}
+}
+
 // ProcessRecord processes a single JSONL record
 func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*orderedmapjson.AnyOrderedMap, error) {
 	// Add nil check to prevent panic
 	if record == nil {
 		return nil, fmt.Errorf("record cannot be nil")
+	}
+
+	// Handle _meta records by updating processor's Meta field
+	if recordMeta, ok := record.Get("_meta"); ok {
+		if metaMap, ok := recordMeta.(*orderedmapjson.AnyOrderedMap); ok {
+			if p.Meta == nil {
+				p.Meta = orderedmapjson.NewAnyOrderedMap()
+			}
+			RecursiveMergeOrderedMaps(p.Meta, metaMap)
+		}
+		// Keep _meta in the record (don't remove it)
 	}
 
 	// Process any category-specific logic
@@ -444,6 +556,9 @@ func (p *JSONLProcessor) ProcessRecord(record *orderedmapjson.AnyOrderedMap) (*o
 
 	// FIXME: this may now be redundant
 	p.updateOrderedColumns(record)
+
+	// Update schema inference
+	p.updateSchemaInference(record)
 
 	p.RecordHistory = append(p.RecordHistory, record)
 	p.CurrentIndex = len(p.RecordHistory) - 1
@@ -499,7 +614,16 @@ func ExpandRecord(record *orderedmapjson.AnyOrderedMap, version int, schemas, me
 
 	// handle special records
 	if recordVersion, ok := dataRecord.Get("_version"); ok {
-		version = int(recordVersion.(float64))
+		switch v := recordVersion.(type) {
+		case float64:
+			version = int(v)
+		case int:
+			version = v
+		case int64:
+			version = int(v)
+		default:
+			version = 0
+		}
 		dataRecord.Delete("_version")
 	}
 	if recordSchema, ok := dataRecord.Get("_schema"); ok {
@@ -582,7 +706,16 @@ func (p *JSONLProcessor) ToExpandedJSONL(expandAndCarrySpecialFields bool) strin
 
 		if expandAndCarrySpecialFields {
 			if newVersion, ok := record.Get("_version"); ok {
-				currentVersion = int(newVersion.(float64))
+				switch v := newVersion.(type) {
+				case float64:
+					currentVersion = int(v)
+				case int:
+					currentVersion = v
+				case int64:
+					currentVersion = int(v)
+				default:
+					currentVersion = 0
+				}
 			}
 			if newSchema, ok := record.Get("_schema"); ok {
 				RecursiveMergeOrderedMaps(&currentSchemas, newSchema.(*orderedmapjson.AnyOrderedMap))
