@@ -1525,7 +1525,7 @@ func TestRoundTrip_SpecialKeys(t *testing.T) {
 		{
 			name:  "round-trip with mixed special keys",
 			input: `{"time":"2024-01-01","@merge":true,"":"empty","$ref":"#/definitions/User","&copy":"2024"}`,
-			want:  `{"time":"2024-01-01","@merge":true,"":"empty","$ref":"#/definitions/User","\u0026copy":2024}`,
+			want:  `{"time":"2024-01-01","@merge":true,"":"empty","$ref":"#/definitions/User","\u0026copy":"2024"}`,
 		},
 		{
 			name:  "round-trip with nested special keys",
