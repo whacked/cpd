@@ -564,14 +564,14 @@ func TestYAMLToJSONLConversion(t *testing.T) {
 
 						case record.Array != nil:
 							m := orderedmapjson.NewAnyOrderedMap()
-							if len(record.Array) != len(columns) {
-								t.Errorf("Array record length %d does not match columns length %d", len(record.Array), len(columns))
+							if len(record.Array) != len(currentColumns) {
+								t.Errorf("Array record length %d does not match columns length %d", len(record.Array), len(currentColumns))
 								continue
 							}
 							// not clear why something like [1, 2, "stuff"] yields "1" as a string
 							// but with this gratuitous type conversion, we do recover the value
 							for i, v := range record.Array {
-								key := columns[i]
+								key := currentColumns[i]
 								if mappings, ok := reverseMappings[key]; ok {
 									if strVal, ok := v.(string); ok {
 										if intVal, err := strconv.Atoi(strVal); err == nil {
@@ -584,7 +584,11 @@ func TestYAMLToJSONLConversion(t *testing.T) {
 								}
 								m.Set(key, v)
 							}
-							allRecordsFromYaml = append(allRecordsFromYaml, m)
+							if tt.mode == "expanded" {
+								allRecordsFromYaml = append(allRecordsFromYaml, ExpandRecord(m, currentVersion, currentSchemas, currentMeta))
+							} else {
+								allRecordsFromYaml = append(allRecordsFromYaml, m)
+							}
 
 						case record.String != "":
 							// FIXME this is wrong.
