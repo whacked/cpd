@@ -173,3 +173,10 @@ Join fields may be expanded into M\:N or 1\:N join tables as needed.
 * Join table merges must preserve bijection (no key or ID collisions)
 * The `payload` column (if present) must be a YAML mapping (JSON object)
 
+
+# (integrate this with the rest of the doc later)
+
+- why is "data" the only special key?
+  - for sqlite generation, the data table is called "data"
+  - for a similar reasoning, underscore _ prefixed keys are special keys and are NOT tables
+  - assume all other keys are actual sqlite tables
