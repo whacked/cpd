@@ -1,0 +1,14 @@
+_columns: [device_id, temperature, status, reading_type]
+status:
+  ok: 1
+  warn: 2
+  fail: 3
+reading_type:
+  manual: 1
+  auto: 2
+data:
+  - ["sensor-01", 22.5, 1, 2]
+  - {device_id: "sensor-02", temperature: 28.4, status: "warn", extra_field: "unexpected"}
+  - ["sensor-03", 19.8, ~, 1]
+  - {device_id: "sensor-04", status: "fail", reading_type: "manual"}
+  - {temperature: 31.2, status: "warn", device_id: "sensor-05", reading_type: "auto"}

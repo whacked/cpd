@@ -2,13 +2,17 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/GitRowin/orderedmapjson"
 	"github.com/whacked/yamdb/pkg/codec"
+	"github.com/whacked/yamdb/pkg/io/yamlutil"
+	"gopkg.in/yaml.v3"
 )
 
 // Global variables
@@ -90,6 +94,49 @@ func detectFormatFromExtension(filePath string) string {
 	default:
 		return ""
 	}
+}
+
+// isSparseJSONL determines if a JSONL file contains sparse records
+// with special-key-only lines (keys starting with underscore)
+func isSparseJSONL(data string) bool {
+	scanner := bufio.NewScanner(strings.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		// Parse as JSON to extract keys
+		var record map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			continue // Skip malformed lines
+		}
+
+		// Check if this record contains ONLY special keys (starting with _)
+		if len(record) == 0 {
+			continue
+		}
+
+		hasOnlySpecialKeys := true
+		hasAtLeastOneKey := false
+
+		for key := range record {
+			hasAtLeastOneKey = true
+			if !strings.HasPrefix(key, "_") {
+				hasOnlySpecialKeys = false
+				break
+			}
+		}
+
+		// If we found a record with only special keys, it's scattered JSONL
+		if hasAtLeastOneKey && hasOnlySpecialKeys {
+			return true
+		}
+	}
+
+	return false
 }
 
 func printUsage() {
@@ -237,6 +284,7 @@ func main() {
 	}
 
 	var result string
+	var expandCarryForward bool
 
 	// Handle SQL mode for YAML/CPD files
 	if sqlMode {
@@ -252,24 +300,63 @@ func main() {
 	} else {
 		// Regular conversion mode
 		if format == "jsonl" {
-			// Convert JSONL to CPD YAML
-			if joinTables != "" {
-				// Parse join tables from flag
-				joinTableFields := strings.Split(joinTables, ",")
-				joinTablesMap := make(map[string]map[string]int)
-				for _, field := range joinTableFields {
-					field = strings.TrimSpace(field)
-					if field != "" {
-						joinTablesMap[field] = make(map[string]int)
-					}
-				}
-				result, err = codec.JSONLToCPDWithJoinTables(strings.NewReader(string(fileData)), joinTablesMap)
+			// Detect if this is sparse JSONL (contains special-key-only records)
+			if isSparseJSONL(string(fileData)) {
+				// Use the carry-forward processor to combine sparse records
+				expandCarryForward = true
 			} else {
-				result, err = codec.JSONLToCPD(strings.NewReader(string(fileData)))
+				// Convert JSONL to CPD YAML
+				if joinTables != "" {
+					// Parse join tables from flag
+					joinTableFields := strings.Split(joinTables, ",")
+					joinTablesMap := make(map[string]map[string]int)
+					for _, field := range joinTableFields {
+						field = strings.TrimSpace(field)
+						if field != "" {
+							joinTablesMap[field] = make(map[string]int)
+						}
+					}
+					result, err = codec.JSONLToCPDWithJoinTables(strings.NewReader(string(fileData)), joinTablesMap)
+				} else {
+					result, err = codec.JSONLToCPD(strings.NewReader(string(fileData)))
+				}
 			}
 		} else {
 			// Convert CPD YAML to JSONL
 			result, err = codec.CPDToJSONLUnified(strings.NewReader(string(fileData)))
+		}
+
+		// If we need to expand and carry forward special fields
+		if expandCarryForward {
+			processor := codec.NewJSONLProcessor()
+			scanner := bufio.NewScanner(strings.NewReader(string(fileData)))
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" || strings.HasPrefix(line, "//") {
+					continue
+				}
+
+				// Parse the line as YAML to preserve order
+				var node yaml.Node
+				if err := yaml.Unmarshal([]byte(line), &node); err != nil {
+					fmt.Printf("Error parsing JSONL line: %v\n", err)
+					os.Exit(1)
+				}
+
+				record := orderedmapjson.NewAnyOrderedMap()
+				if err := yamlutil.ConvertNodeToOrderedMap(&node, record); err != nil {
+					fmt.Printf("Error converting to ordered map: %v\n", err)
+					os.Exit(1)
+				}
+
+				if _, err := processor.ProcessRecord(record); err != nil {
+					fmt.Printf("Error processing record: %v\n", err)
+					os.Exit(1)
+				}
+			}
+
+			// Convert to expanded JSONL with carry-forward
+			result = processor.ToExpandedJSONL(true)
 		}
 
 		if err != nil {
