@@ -450,10 +450,9 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 	}
 
 	// Validate data against schema if present
-	// TODO: Fix schema validation to handle null values properly
-	// if err := doc.validateDataAgainstSchema(); err != nil {
-	//	return nil, err
-	// }
+	if err := doc.validateDataAgainstSchema(); err != nil {
+		return nil, err
+	}
 
 	return doc, nil
 }
@@ -2275,10 +2274,12 @@ func (d *CPDDocument) validateDataAgainstSchema() error {
 	for _, row := range d.Data {
 		// Convert CPD row to a map for validation, expanding join table IDs
 		rowMap := make(map[string]interface{})
+
+		// First, populate with actual row values
 		for el := row.Values.Front(); el != nil; el = el.Next() {
 			key := el.Key
 			value := el.Value
-			
+
 			// Check if this is a join table field and expand the ID to name
 			if joinTable, isJoin := d.JoinTables[key]; isJoin && joinTable != nil {
 				switch v := value.(type) {
@@ -2310,6 +2311,11 @@ func (d *CPDDocument) validateDataAgainstSchema() error {
 				rowMap[key] = value
 			}
 		}
+
+		// Note: We don't add missing columns here.
+		// If OmitMissingColumns=true, missing columns are omitted (not set to null).
+		// The validator will treat missing fields according to the schema's required/optional rules.
+
 		dataForValidation = append(dataForValidation, rowMap)
 	}
 

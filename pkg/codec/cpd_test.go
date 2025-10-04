@@ -1955,7 +1955,7 @@ data:
 			doc, err := ParseCPD(strings.NewReader(tt.input))
 			if tt.wantErr {
 				assert.Error(t, err)
-				if tt.errMsg != "" {
+				if err != nil && tt.errMsg != "" {
 					assert.Contains(t, err.Error(), tt.errMsg)
 				}
 			} else {
