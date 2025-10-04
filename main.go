@@ -11,6 +11,7 @@ import (
 
 	"github.com/GitRowin/orderedmapjson"
 	"github.com/whacked/yamdb/pkg/codec"
+	"github.com/whacked/yamdb/pkg/io/stream"
 	"github.com/whacked/yamdb/pkg/io/yamlutil"
 	"gopkg.in/yaml.v3"
 )
@@ -22,6 +23,7 @@ var (
 	showVersion    bool
 	sqlMode        bool
 	joinTables     string
+	toJSONL        bool
 )
 
 // detectFileFormat reads the beginning of a file to determine if it's JSONL or YAML format
@@ -163,7 +165,13 @@ func printUsage() {
 	fmt.Println("  -v, --verbose        Verbose output")
 	fmt.Println("  -vvv                 Extra verbose output")
 	fmt.Println("  -sql                 Generate SQLite DDL and INSERT statements")
+	fmt.Println("  --to-jsonl           Force streaming JSONL output with carry-forward")
 	fmt.Println("  -join-tables string  Comma-separated list of fields to force as join tables")
+	fmt.Println()
+	fmt.Println("Stdin examples:")
+	fmt.Println("  cat data.yaml | ydb              # YAML → expanded JSONL")
+	fmt.Println("  ydb sparse.jsonl | ydb           # sparse → expanded → YAML")
+	fmt.Println("  cat sparse.jsonl | ydb --to-jsonl  # sparse → expanded (streaming)")
 }
 
 func parseFlags() {
@@ -190,6 +198,9 @@ func parseFlags() {
 			i++
 		case arg == "-sql":
 			sqlMode = true
+			i++
+		case arg == "--to-jsonl":
+			toJSONL = true
 			i++
 		case arg == "-join-tables":
 			if i+1 < len(args) {
@@ -238,35 +249,52 @@ func main() {
 		return
 	}
 
-	// Check for file argument
+	// Determine input source: stdin or file
+	var fileData []byte
+	var format string
+	var err error
+	var inputFile string
+
 	if len(os.Args) < 2 {
-		fmt.Println("Error: file argument is required")
-		printUsage()
-		os.Exit(1)
-	}
+		// No file argument, read from stdin
+		if verbosityLevel > 0 {
+			fmt.Fprintf(os.Stderr, "Reading from stdin...\n")
+		}
 
-	inputFile := os.Args[1]
-
-	// Check if file exists
-	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
-		fmt.Printf("Error: file '%s' does not exist\n", inputFile)
-		os.Exit(1)
-	}
-
-	// Read input file
-	fileData, err := os.ReadFile(inputFile)
-	if err != nil {
-		fmt.Printf("Error reading file: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Detect format from extension first, then content
-	format := detectFormatFromExtension(inputFile)
-	if format == "" {
-		format, err = detectFileFormat(inputFile)
+		format, fileData, err = stream.DetectFormat(os.Stdin)
 		if err != nil {
-			fmt.Printf("Error detecting file format: %v\n", err)
+			fmt.Printf("Error detecting format from stdin: %v\n", err)
 			os.Exit(1)
+		}
+
+		if verbosityLevel > 0 {
+			fmt.Fprintf(os.Stderr, "Detected format from stdin: %s\n", format)
+		}
+	} else {
+		// File argument provided
+		inputFile = os.Args[1]
+
+		// Check if file exists
+		if _, err := os.Stat(inputFile); os.IsNotExist(err) {
+			fmt.Printf("Error: file '%s' does not exist\n", inputFile)
+			os.Exit(1)
+		}
+
+		// Read input file
+		fileData, err = os.ReadFile(inputFile)
+		if err != nil {
+			fmt.Printf("Error reading file: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Detect format from extension first, then content
+		format = detectFormatFromExtension(inputFile)
+		if format == "" {
+			format, err = detectFileFormat(inputFile)
+			if err != nil {
+				fmt.Printf("Error detecting file format: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -300,29 +328,35 @@ func main() {
 	} else {
 		// Regular conversion mode
 		if format == "jsonl" {
-			// Detect if this is sparse JSONL (contains special-key-only records)
-			if isSparseJSONL(string(fileData)) {
-				// Use the carry-forward processor to combine sparse records
+			if toJSONL {
+				// Force streaming JSONL output with carry-forward
+				// This is idempotent: works on both sparse and expanded JSONL
 				expandCarryForward = true
 			} else {
-				// Convert JSONL to CPD YAML
-				if joinTables != "" {
-					// Parse join tables from flag
-					joinTableFields := strings.Split(joinTables, ",")
-					joinTablesMap := make(map[string]map[string]int)
-					for _, field := range joinTableFields {
-						field = strings.TrimSpace(field)
-						if field != "" {
-							joinTablesMap[field] = make(map[string]int)
-						}
-					}
-					result, err = codec.JSONLToCPDWithJoinTables(strings.NewReader(string(fileData)), joinTablesMap)
+				// Detect if this is sparse JSONL (contains special-key-only records)
+				if isSparseJSONL(string(fileData)) {
+					// Use the carry-forward processor to combine sparse records
+					expandCarryForward = true
 				} else {
-					result, err = codec.JSONLToCPD(strings.NewReader(string(fileData)))
+					// Convert expanded JSONL to CPD YAML
+					if joinTables != "" {
+						// Parse join tables from flag
+						joinTableFields := strings.Split(joinTables, ",")
+						joinTablesMap := make(map[string]map[string]int)
+						for _, field := range joinTableFields {
+							field = strings.TrimSpace(field)
+							if field != "" {
+								joinTablesMap[field] = make(map[string]int)
+							}
+						}
+						result, err = codec.JSONLToCPDWithJoinTables(strings.NewReader(string(fileData)), joinTablesMap)
+					} else {
+						result, err = codec.JSONLToCPD(strings.NewReader(string(fileData)))
+					}
 				}
 			}
 		} else {
-			// Convert CPD YAML to JSONL
+			// Convert CPD YAML to JSONL (always expanded)
 			result, err = codec.CPDToJSONLUnified(strings.NewReader(string(fileData)))
 		}
 

@@ -3,6 +3,7 @@ package relational
 import (
 	"fmt"
 	"math"
+	"os"
 	"sort"
 
 	"github.com/GitRowin/orderedmapjson"
@@ -403,12 +404,12 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 		// Only include if score is above threshold
 		if score > 0.25 { // Lowered threshold for better test compatibility
 			candidates[field] = score
-			fmt.Printf("Field: %s (array: %v)\n", field, stats.IsArray)
-			fmt.Printf("  Entropy: %.3f (inverse: %.3f)\n", entropy, inverseEntropy)
-			fmt.Printf("  Gini: %.3f\n", gini)
-			fmt.Printf("  Max Freq: %.3f\n", maxFreq)
-			fmt.Printf("  Reuse Ratio: %.3f\n", reuseRatio)
-			fmt.Printf("  Final Score: %.3f\n", score)
+			fmt.Fprintf(os.Stderr, "Field: %s (array: %v)\n", field, stats.IsArray)
+			fmt.Fprintf(os.Stderr, "  Entropy: %.3f (inverse: %.3f)\n", entropy, inverseEntropy)
+			fmt.Fprintf(os.Stderr, "  Gini: %.3f\n", gini)
+			fmt.Fprintf(os.Stderr, "  Max Freq: %.3f\n", maxFreq)
+			fmt.Fprintf(os.Stderr, "  Reuse Ratio: %.3f\n", reuseRatio)
+			fmt.Fprintf(os.Stderr, "  Final Score: %.3f\n", score)
 		}
 	}
 
