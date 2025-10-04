@@ -1753,13 +1753,10 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		}
 	}
 
-	// Add regular data fields to columns in a consistent order
-	var regularFields []string
-	for field := range allFields {
-		regularFields = append(regularFields, field)
+	// Add single payload column if there are non-join fields
+	if len(allFields) > 0 {
+		columns = append(columns, "payload")
 	}
-	sort.Strings(regularFields) // Ensure consistent ordering
-	columns = append(columns, regularFields...)
 
 	// Create or use join tables for the selected fields
 	finalJoinTables := make(map[string]map[string]int)
@@ -1905,10 +1902,25 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 			colIndex++
 		}
 
-		// Handle join fields and regular data fields
+		// Handle join fields and payload
 		for i := colIndex; i < len(columns); i++ {
 			col := columns[i]
-			if joinTable, isJoin := finalJoinTables[col]; isJoin {
+			if col == "payload" {
+				// Collect all non-join, non-time fields into payload object
+				payloadMap := orderedmapjson.NewAnyOrderedMap()
+				for el := record.Front(); el != nil; el = el.Next() {
+					field := el.Key
+					// Skip time/timestamp and join table fields
+					if field != timeColumn && !joinFields.Has(field) {
+						payloadMap.Set(field, el.Value)
+					}
+				}
+				if payloadMap.Len() > 0 {
+					rowValues[i] = payloadMap
+				} else {
+					rowValues[i] = nil
+				}
+			} else if joinTable, isJoin := finalJoinTables[col]; isJoin {
 				if value, exists := record.Get(col); exists {
 					switch v := value.(type) {
 					case string:
@@ -1941,13 +1953,6 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 					default:
 						rowValues[i] = nil
 					}
-				} else {
-					rowValues[i] = nil
-				}
-			} else {
-				// Regular data field - extract value directly
-				if value, exists := record.Get(col); exists {
-					rowValues[i] = value
 				} else {
 					rowValues[i] = nil
 				}
