@@ -509,15 +509,16 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 		// Add row values
 		for el := row.Values.Front(); el != nil; el = el.Next() {
 
-			/* UH OH... what to do?
-			// Skip fields with nil or "null" value
-			if el.Value == nil {
-				continue
+			// Skip fields with nil or "null" value when OmitMissingColumns is true
+			if OmitMissingColumns {
+				if el.Value == nil {
+					continue
+				}
+				if s, ok := el.Value.(string); ok && s == "null" {
+					continue
+				}
 			}
-			if s, ok := el.Value.(string); ok && s == "null" {
-				continue
-			}
-			*/
+
 			if idx > 0 {
 				recordBuilder.WriteByte(',')
 			}
@@ -1901,7 +1902,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 			colIndex++
 		}
 
-		// Handle join fields and payload
+		// Handle join fields, payload, or regular fields
 		for i := colIndex; i < len(columns); i++ {
 			col := columns[i]
 			if col == "payload" {
@@ -1952,6 +1953,13 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 					default:
 						rowValues[i] = nil
 					}
+				} else {
+					rowValues[i] = nil
+				}
+			} else {
+				// Regular data field - extract value directly
+				if value, exists := record.Get(col); exists {
+					rowValues[i] = value
 				} else {
 					rowValues[i] = nil
 				}

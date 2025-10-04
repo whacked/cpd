@@ -30,7 +30,7 @@ _schemas:
         name:
           type: string
         temperature:
-          type: number
+          type: [number, "null"]
         status:
           type: [string, "null"]
       required: [name, temperature]

@@ -17,6 +17,9 @@ const (
 	// MinOccurrences is the minimum number of times a value must appear to be considered
 	// for a join table
 	MinOccurrences = 3
+
+	// FIXME TODO: unify this setting with other globals. Main is in codec.go now
+	VerbosityLevel = 0
 )
 
 // FieldCategory represents the type of a field
@@ -363,6 +366,9 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 
 	for field, stats := range d.FieldStats {
 		if stats.TotalOccurrences == 0 || stats.Values.Len() == 0 {
+			if VerbosityLevel > 1 {
+				fmt.Fprintf(os.Stderr, "DEBUG: skipping field=%q, totalOccurrences=%d, values=%d\n", field, stats.TotalOccurrences, stats.Values.Len())
+			}
 			continue
 		}
 
@@ -380,6 +386,11 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 			reuseRatio = float64(stats.TotalElements) / float64(stats.Values.Len())
 		} else {
 			reuseRatio = float64(stats.TotalOccurrences) / float64(stats.Values.Len())
+		}
+
+		if VerbosityLevel > 1 {
+			fmt.Fprintf(os.Stderr, "DEBUG: field=%q, isArray=%v, entropy=%.3f, gini=%.3f, maxFreq=%.3f, reuseRatio=%.3f, values=%d, totalOccurrences=%d\n",
+				field, stats.IsArray, entropy, gini, maxFreq, reuseRatio, stats.Values.Len(), stats.TotalOccurrences)
 		}
 
 		// Calculate final score
@@ -404,12 +415,14 @@ func (d *TableDeriver) GetJoinTableCandidates() map[string]float64 {
 		// Only include if score is above threshold
 		if score > 0.25 { // Lowered threshold for better test compatibility
 			candidates[field] = score
-			fmt.Fprintf(os.Stderr, "Field: %s (array: %v)\n", field, stats.IsArray)
-			fmt.Fprintf(os.Stderr, "  Entropy: %.3f (inverse: %.3f)\n", entropy, inverseEntropy)
-			fmt.Fprintf(os.Stderr, "  Gini: %.3f\n", gini)
-			fmt.Fprintf(os.Stderr, "  Max Freq: %.3f\n", maxFreq)
-			fmt.Fprintf(os.Stderr, "  Reuse Ratio: %.3f\n", reuseRatio)
-			fmt.Fprintf(os.Stderr, "  Final Score: %.3f\n", score)
+			if VerbosityLevel > 1 {
+				fmt.Fprintf(os.Stderr, "Field: %s (array: %v)\n", field, stats.IsArray)
+				fmt.Fprintf(os.Stderr, "  Entropy: %.3f (inverse: %.3f)\n", entropy, inverseEntropy)
+				fmt.Fprintf(os.Stderr, "  Gini: %.3f\n", gini)
+				fmt.Fprintf(os.Stderr, "  Max Freq: %.3f\n", maxFreq)
+				fmt.Fprintf(os.Stderr, "  Reuse Ratio: %.3f\n", reuseRatio)
+				fmt.Fprintf(os.Stderr, "  Final Score: %.3f\n", score)
+			}
 		}
 	}
 

@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +14,10 @@ import (
 // sparse JSONL → expanded JSONL → YAML → expanded JSONL
 // The final output should match the intermediate expanded JSONL
 func TestRoundTrip_SparseJSONL_To_YAML_To_ExpandedJSONL(t *testing.T) {
+	// This test expects null values to be preserved
+	defer func() { OmitMissingColumns = true }()
+	OmitMissingColumns = false
+
 	// Read sparse JSONL
 	sparseData, err := os.ReadFile("testdata/meta_version.jsonl")
 	require.NoError(t, err)
@@ -118,6 +123,10 @@ func TestRoundTrip_ExpandedJSONL_Stability(t *testing.T) {
 // TestRoundTrip_Pipeline_Simulation simulates the CLI pipeline:
 // sparse.jsonl | ydb --to-jsonl | ydb --to-jsonl | ydb | ydb
 func TestRoundTrip_Pipeline_Simulation(t *testing.T) {
+	// This test expects null values to be preserved
+	defer func() { OmitMissingColumns = true }()
+	OmitMissingColumns = false
+
 	// Read sparse JSONL
 	sparseData, err := os.ReadFile("testdata/meta_version.jsonl")
 	require.NoError(t, err)
@@ -179,6 +188,17 @@ func normalizeJSONL(jsonl string) string {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" && !strings.HasPrefix(trimmed, "//") {
+			// Parse JSON and re-serialize with sorted keys for consistent comparison
+			var obj map[string]interface{}
+			if err := json.Unmarshal([]byte(trimmed), &obj); err == nil {
+				// Re-marshal with sorted keys
+				canonical, err := json.Marshal(obj)
+				if err == nil {
+					normalized = append(normalized, string(canonical))
+					continue
+				}
+			}
+			// If parsing fails, use original line
 			normalized = append(normalized, trimmed)
 		}
 	}
