@@ -15,6 +15,10 @@
 
 let
   goEnv = mkGoEnv { pwd = ./.; go = pkgs.go_1_23; };
+
+  # Add sdflow from flake
+  sdflow = (builtins.getFlake "github:whacked/sdflow").packages.${pkgs.system}.default;
+
   go-jsonschema = pkgs.stdenv.mkDerivation {
     name = "go-jsonschema";
     src = pkgs.fetchurl {
@@ -42,6 +46,7 @@ pkgs.mkShell {
     go-jsonschema
     pkgs.check-jsonschema
     pkgs.mdsh
+    sdflow
   ];  # join lists with ++
 
   nativeBuildInputs = [
@@ -150,6 +155,7 @@ pkgs.mkShell {
     }
   '' + ''
     export PATH=$PWD:$PATH
+    eval "$(sdflow --completions bash)"
     #ensure-goenv $name
     unset TMP TMPDIR TEMP TEMPDIR
     echo-shortcuts ${__curPos.file}
