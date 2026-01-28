@@ -1,0 +1,31 @@
+build:
+  in:
+    - main.go
+    - version.go
+  out: ./ydb
+  run: go build -o $out $in
+
+version.go:
+  in: Sdflow.yaml
+  out: version.go
+  run: |
+    today=$(date +%Y%m%d)
+    git_commits_today=$(git log --pretty=format:"%cd %h" --date=format:"%Y%m%d" | tac | grep "^$today")
+    number_commits_today=$(echo "$git_commits_today" | wc -l)
+    latest_sha=$(git log --oneline | head -1 | awk '{print $1}')
+
+    echo 'package main
+
+    const version = "'$today.$number_commits_today.$latest_sha'"' > $out
+
+
+# schemas stuff
+schemas:
+  in: src/autogen/schemas/YamlFile.tagged.schema.json
+
+yaml-database-schema:
+  in: templates/schemas/YamlFile.tagged.schema.jsonnet
+  out: src/autogen/schemas/YamlFile.tagged.schema.json
+  run: |
+    test -d $(dirname $in) || mkdir -p $(dirname $out)
+    jsonnet $in | jq -S | tee $out
