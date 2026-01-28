@@ -23,6 +23,7 @@ var (
 	showVersion    bool
 	sqlMode        bool
 	joinTables     string
+	timeColumns    string
 	toJSONL        bool
 	toParquet      bool
 	outputFile     string
@@ -170,7 +171,8 @@ func printUsage() {
 	fmt.Println("  --to-jsonl           Force streaming JSONL output with carry-forward")
 	fmt.Println("  --to-parquet         Convert to Parquet format (binary output)")
 	fmt.Println("  -o, --output FILE    Write output to FILE (for binary formats)")
-	fmt.Println("  -join-tables string  Comma-separated list of fields to force as join tables")
+	fmt.Println("  -join-tables LIST    Comma-separated list of fields to force as join tables")
+	fmt.Println("  -time-columns LIST   Comma-separated time column candidates (default: time,timestamp)")
 	fmt.Println()
 	fmt.Println("Stdin examples:")
 	fmt.Println("  cat data.yaml | ydb                          # YAML → expanded JSONL")
@@ -225,6 +227,14 @@ func parseFlags() {
 				i += 2 // Skip both current and next argument
 			} else {
 				fmt.Println("Error: -join-tables requires a value")
+				os.Exit(1)
+			}
+		case arg == "-time-columns":
+			if i+1 < len(args) {
+				timeColumns = args[i+1]
+				i += 2
+			} else {
+				fmt.Println("Error: -time-columns requires a value")
 				os.Exit(1)
 			}
 		case strings.HasPrefix(arg, "-"):
@@ -318,10 +328,24 @@ func main() {
 	// Set global verbosity level for codec package
 	codec.VerbosityLevel = verbosityLevel
 
+	// Parse and set time columns if specified
+	if timeColumns != "" {
+		var timeColumnList []string
+		for _, col := range strings.Split(timeColumns, ",") {
+			if trimmed := strings.TrimSpace(col); trimmed != "" {
+				timeColumnList = append(timeColumnList, trimmed)
+			}
+		}
+		codec.TimeColumns = timeColumnList
+	}
+
 	if verbosityLevel > 0 {
 		fmt.Fprintf(os.Stderr, "Detected format: %s\n", format)
 		if joinTables != "" {
 			fmt.Fprintf(os.Stderr, "Using join tables: %s\n", joinTables)
+		}
+		if timeColumns != "" {
+			fmt.Fprintf(os.Stderr, "Using time columns: %s\n", timeColumns)
 		}
 		if sqlMode {
 			fmt.Fprintf(os.Stderr, "SQL mode enabled\n")

@@ -84,6 +84,43 @@ An array of rows, each being a YAML flow-style sequence zipped with `_columns:`.
 
 ---
 
+## 🔧 Field Processing Conventions
+
+### Time Column Detection
+
+When converting JSONL to CPD format, the converter auto-detects a **time column** and places it first in `_columns` for readability.
+
+**Default candidates** (checked in order): `time`, `timestamp`
+
+**CLI override:**
+```bash
+ydb data.jsonl -time-columns time,timestamp,ts,created_at
+```
+
+The first matching column found in the data becomes the time column and is placed first in `_columns`.
+
+**Special handling for time columns:**
+- Placed first in `_columns` list
+- Extra quotes stripped from values (if present)
+- Forced to `TEXT` type in SQLite generation
+
+### Payload Field Flattening
+
+When a column named `payload` is present in `_columns`:
+
+**CPD → JSONL:**
+- Payload object keys are **merged into the top-level** JSONL row
+- `{"time":"...", "payload": {"note":"x"}}` → `{"time":"...", "note":"x"}`
+
+**JSONL → CPD:**
+- Fields NOT matching any `_columns` entry are collected INTO `payload`
+- Enables round-trippable conversion
+
+**Without payload column:**
+- Extra fields are added directly to the row (no collection)
+
+---
+
 ## 🧠 Field Promotion Strategy
 
 When transforming JSONL into CPD:

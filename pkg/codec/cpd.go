@@ -30,6 +30,45 @@ var ArraySeparator = ", "
 // Default is true (omit missing columns for cleaner output)
 var OmitMissingColumns = true
 
+// DefaultTimeColumns is the default list of column names to treat as time columns.
+// The first matching column found in the data is placed first in _columns and
+// receives special handling (quote stripping, forced TEXT type in SQL).
+var DefaultTimeColumns = []string{"time", "timestamp"}
+
+// TimeColumns is the current list of time column candidates to use.
+// If nil, DefaultTimeColumns is used. Set this from CLI flags to override.
+var TimeColumns []string
+
+// isTimeColumn checks if a column name is in the time columns list
+func isTimeColumn(colName string, timeColumns []string) bool {
+	if timeColumns == nil {
+		timeColumns = DefaultTimeColumns
+	}
+	for _, tc := range timeColumns {
+		if colName == tc {
+			return true
+		}
+	}
+	return false
+}
+
+// detectTimeColumn finds the first matching time column in records.
+// It checks columns in the order specified by timeColumns and returns
+// the first one found in any record.
+func detectTimeColumn(records []*orderedmapjson.AnyOrderedMap, timeColumns []string) string {
+	if timeColumns == nil {
+		timeColumns = DefaultTimeColumns
+	}
+	for _, rec := range records {
+		for _, tc := range timeColumns {
+			if _, exists := rec.Get(tc); exists {
+				return tc
+			}
+		}
+	}
+	return ""
+}
+
 // CPDRow represents a single row in the CPD format
 type CPDRow struct {
 	Values *orderedmapjson.AnyOrderedMap // Structured values matching _columns
@@ -1117,8 +1156,8 @@ func parseDataRow(line string, columns []string, joinTables map[string]*JoinTabl
 			} else {
 				row.Values.Set(colName, val)
 			}
-		} else if colName == "time" && val != nil {
-			// Remove extra quotes from time
+		} else if isTimeColumn(colName, TimeColumns) && val != nil {
+			// Remove extra quotes from time columns
 			if s, ok := val.(string); ok && len(s) > 1 && s[0] == '"' && s[len(s)-1] == '"' {
 				row.Values.Set(colName, s[1:len(s)-1])
 			} else {
@@ -1258,8 +1297,8 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 			} else {
 				row.Values.Set(colName, val)
 			}
-		} else if colName == "time" && val != nil {
-			// Remove extra quotes from time if needed
+		} else if isTimeColumn(colName, TimeColumns) && val != nil {
+			// Remove extra quotes from time columns if needed
 			if s, ok := val.(string); ok && len(s) > 1 && s[0] == '"' && s[len(s)-1] == '"' {
 				row.Values.Set(colName, s[1:len(s)-1])
 			} else {
@@ -1699,19 +1738,9 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		allRecords = append(allRecords, record)
 	}
 
-	// Determine the time column - scan for first record with 'time' or 'timestamp'
-	timeColumn := ""
-	for _, rec := range allRecords {
-		if _, hasTime := rec.Get("time"); hasTime {
-			timeColumn = "time"
-			break
-		}
-		if _, hasTimestamp := rec.Get("timestamp"); hasTimestamp {
-			timeColumn = "timestamp"
-			break
-		}
-	}
-	// Initialize columns - include time/timestamp as first column if present
+	// Determine the time column using the configured time column candidates
+	timeColumn := detectTimeColumn(allRecords, TimeColumns)
+	// Initialize columns - include time column as first column if present
 	var columns []string
 	if timeColumn != "" {
 		columns = []string{timeColumn}
@@ -2316,10 +2345,10 @@ func CPDToSQLite(r io.Reader) (string, error) {
 			category = relational.FieldCategoryOneToMany
 		}
 		
-		// Determine element type
+		// Determine element type - time columns are forced to string type
 		elementType := "string"
-		if col == "time" || col == "timestamp" {
-			elementType = "string" // Keep as string for timestamps
+		if isTimeColumn(col, TimeColumns) {
+			elementType = "string" // Keep as string for time columns
 		}
 		
 		fieldInfo[col] = &relational.FieldInfo{

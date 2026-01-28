@@ -69,8 +69,9 @@ data:
 						}(),
 					},
 				},
-				Meta:    orderedmapjson.NewAnyOrderedMap(),
-				Version: "",
+				Meta:                 orderedmapjson.NewAnyOrderedMap(),
+				Version:              "",
+				ArrayPromotedColumns: map[string]bool{"authors": true},
 			},
 			wantErr: false,
 		},
@@ -105,8 +106,9 @@ data:
 						}(),
 					},
 				},
-				Meta:    orderedmapjson.NewAnyOrderedMap(),
-				Version: "",
+				Meta:                 orderedmapjson.NewAnyOrderedMap(),
+				Version:              "",
+				ArrayPromotedColumns: map[string]bool{},
 			},
 			wantErr: false,
 		},
@@ -2051,6 +2053,189 @@ data:
 					assert.Empty(t, doc.Schemas)
 				}
 			}
+		})
+	}
+}
+
+func TestIsTimeColumn(t *testing.T) {
+	tests := []struct {
+		name        string
+		colName     string
+		timeColumns []string
+		want        bool
+	}{
+		{
+			name:        "time with default columns",
+			colName:     "time",
+			timeColumns: nil, // uses DefaultTimeColumns
+			want:        true,
+		},
+		{
+			name:        "timestamp with default columns",
+			colName:     "timestamp",
+			timeColumns: nil,
+			want:        true,
+		},
+		{
+			name:        "non-time column with default",
+			colName:     "name",
+			timeColumns: nil,
+			want:        false,
+		},
+		{
+			name:        "custom time column ts",
+			colName:     "ts",
+			timeColumns: []string{"ts"},
+			want:        true,
+		},
+		{
+			name:        "time not in custom list",
+			colName:     "time",
+			timeColumns: []string{"ts", "created_at"},
+			want:        false,
+		},
+		{
+			name:        "extended list includes created_at",
+			colName:     "created_at",
+			timeColumns: []string{"time", "timestamp", "created_at"},
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isTimeColumn(tt.colName, tt.timeColumns)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDetectTimeColumn(t *testing.T) {
+	tests := []struct {
+		name        string
+		records     []*orderedmapjson.AnyOrderedMap
+		timeColumns []string
+		want        string
+	}{
+		{
+			name: "detects time column",
+			records: func() []*orderedmapjson.AnyOrderedMap {
+				m := orderedmapjson.NewAnyOrderedMap()
+				m.Set("time", "2024-01-01")
+				m.Set("value", 1)
+				return []*orderedmapjson.AnyOrderedMap{m}
+			}(),
+			timeColumns: nil,
+			want:        "time",
+		},
+		{
+			name: "detects timestamp column",
+			records: func() []*orderedmapjson.AnyOrderedMap {
+				m := orderedmapjson.NewAnyOrderedMap()
+				m.Set("timestamp", "2024-01-01")
+				m.Set("value", 1)
+				return []*orderedmapjson.AnyOrderedMap{m}
+			}(),
+			timeColumns: nil,
+			want:        "timestamp",
+		},
+		{
+			name: "prefers time over timestamp with default order",
+			records: func() []*orderedmapjson.AnyOrderedMap {
+				m := orderedmapjson.NewAnyOrderedMap()
+				m.Set("time", "2024-01-01")
+				m.Set("timestamp", "2024-01-01")
+				return []*orderedmapjson.AnyOrderedMap{m}
+			}(),
+			timeColumns: nil,
+			want:        "time",
+		},
+		{
+			name: "detects custom ts column",
+			records: func() []*orderedmapjson.AnyOrderedMap {
+				m := orderedmapjson.NewAnyOrderedMap()
+				m.Set("ts", "2024-01-01")
+				m.Set("value", 1)
+				return []*orderedmapjson.AnyOrderedMap{m}
+			}(),
+			timeColumns: []string{"ts"},
+			want:        "ts",
+		},
+		{
+			name: "extended list finds created_at",
+			records: func() []*orderedmapjson.AnyOrderedMap {
+				m := orderedmapjson.NewAnyOrderedMap()
+				m.Set("created_at", "2024-01-01")
+				m.Set("value", 1)
+				return []*orderedmapjson.AnyOrderedMap{m}
+			}(),
+			timeColumns: []string{"time", "timestamp", "created_at"},
+			want:        "created_at",
+		},
+		{
+			name: "no time column found",
+			records: func() []*orderedmapjson.AnyOrderedMap {
+				m := orderedmapjson.NewAnyOrderedMap()
+				m.Set("name", "test")
+				m.Set("value", 1)
+				return []*orderedmapjson.AnyOrderedMap{m}
+			}(),
+			timeColumns: nil,
+			want:        "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectTimeColumn(tt.records, tt.timeColumns)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestJSONLToCPDWithCustomTimeColumn(t *testing.T) {
+	// Save and restore TimeColumns after test
+	origTimeColumns := TimeColumns
+	defer func() { TimeColumns = origTimeColumns }()
+
+	tests := []struct {
+		name           string
+		jsonl          string
+		timeColumnsCfg []string
+		wantFirstCol   string
+	}{
+		{
+			name: "default time column detection",
+			jsonl: `{"time":"2024-01-01","value":1}
+{"time":"2024-01-02","value":2}`,
+			timeColumnsCfg: nil,
+			wantFirstCol:   "time",
+		},
+		{
+			name: "custom ts column",
+			jsonl: `{"ts":"2024-01-01","value":1}
+{"ts":"2024-01-02","value":2}`,
+			timeColumnsCfg: []string{"ts"},
+			wantFirstCol:   "ts",
+		},
+		{
+			name: "extended list with created_at",
+			jsonl: `{"created_at":"2024-01-01","value":1}
+{"created_at":"2024-01-02","value":2}`,
+			timeColumnsCfg: []string{"time", "timestamp", "created_at"},
+			wantFirstCol:   "created_at",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			TimeColumns = tt.timeColumnsCfg
+
+			result, err := JSONLToCPDWithJoinTables(strings.NewReader(tt.jsonl), nil)
+			assert.NoError(t, err)
+
+			// Check that the expected time column appears first in _columns
+			assert.Contains(t, result, "_columns: ["+tt.wantFirstCol)
 		})
 	}
 }
