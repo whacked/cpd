@@ -14,6 +14,7 @@ import (
 
 	"github.com/GitRowin/orderedmapjson"
 	"github.com/santhosh-tekuri/jsonschema/v5"
+	"github.com/whacked/yamdb/pkg/io/parquet"
 	"github.com/whacked/yamdb/pkg/io/yamlutil"
 	"github.com/whacked/yamdb/pkg/relational"
 	"gopkg.in/yaml.v3"
@@ -42,12 +43,13 @@ type JoinTable struct {
 
 // CPDDocument represents a complete CPD document
 type CPDDocument struct {
-	Columns    []string
-	JoinTables map[string]*JoinTable
-	Data       []*CPDRow
-	Meta       *orderedmapjson.AnyOrderedMap
-	Version    string
-	Schemas    map[string]*orderedmapjson.AnyOrderedMap // table name -> schema
+	Columns              []string
+	JoinTables           map[string]*JoinTable
+	Data                 []*CPDRow
+	Meta                 *orderedmapjson.AnyOrderedMap
+	Version              string
+	Schemas              map[string]*orderedmapjson.AnyOrderedMap // table name -> schema
+	ArrayPromotedColumns map[string]bool                           // join table columns that should be arrays in output
 }
 
 // ParseCPD parses a CPD YAML document into a CPDDocument
@@ -449,6 +451,41 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 		return nil, fmt.Errorf("missing required data section")
 	}
 
+	// Determine which join table columns need array promotion
+	// (i.e., if ANY row uses array for that column, promote ALL rows to arrays)
+	doc.ArrayPromotedColumns = make(map[string]bool)
+
+	for _, colName := range doc.Columns {
+		// Skip if not a join table
+		if _, isJoinTable := doc.JoinTables[colName]; !isJoinTable {
+			continue
+		}
+
+		// Check all rows for array usage
+		hasArrayUsage := false
+		for _, row := range doc.Data {
+			val, exists := row.Values.Get(colName)
+			if !exists || val == nil {
+				continue
+			}
+
+			// Check if value is an array (slice type)
+			switch val.(type) {
+			case []interface{}, []string, []int:
+				hasArrayUsage = true
+				break
+			}
+
+			if hasArrayUsage {
+				break
+			}
+		}
+
+		if hasArrayUsage {
+			doc.ArrayPromotedColumns[colName] = true
+		}
+	}
+
 	// Validate data against schema if present
 	if err := doc.validateDataAgainstSchema(); err != nil {
 		return nil, err
@@ -524,7 +561,25 @@ func (d *CPDDocument) ToJSONL() (string, error) {
 			}
 			idx++
 			keyJSON, _ := json.Marshal(el.Key)
-			valJSON, err := customMarshalJSON(el.Value)
+
+			// Check if this column needs array promotion
+			valueToMarshal := el.Value
+			if d.ArrayPromotedColumns[el.Key] {
+				// Wrap scalars in arrays, but keep arrays as-is
+				switch v := el.Value.(type) {
+				case []interface{}, []string, []int:
+					// Already an array, keep as-is
+					valueToMarshal = el.Value
+				case nil:
+					// Null remains null (not wrapped)
+					valueToMarshal = nil
+				default:
+					// Wrap scalar in single-element array
+					valueToMarshal = []interface{}{v}
+				}
+			}
+
+			valJSON, err := customMarshalJSON(valueToMarshal)
 			if err != nil {
 				return "", fmt.Errorf("marshal value error: %w", err)
 			}
@@ -594,6 +649,53 @@ func CPDToJSONLUnified(r io.Reader) (string, error) {
 
 	// If structured parsing failed, fall back to line-by-line parsing
 	return CPDToJSONL(strings.NewReader(string(data)))
+}
+
+// CPDToParquet converts a CPD YAML file to Parquet format
+func CPDToParquet(r io.Reader) ([]byte, error) {
+	// First convert CPD to expanded JSONL
+	jsonl, err := CPDToJSONLUnified(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert CPD to JSONL: %w", err)
+	}
+
+	// Parse JSONL into ordered maps
+	var records []*orderedmapjson.AnyOrderedMap
+	scanner := bufio.NewScanner(strings.NewReader(jsonl))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		// Parse into YAML node to preserve order
+		var node yaml.Node
+		if err := yaml.Unmarshal([]byte(line), &node); err != nil {
+			return nil, fmt.Errorf("failed to parse JSONL line: %w", err)
+		}
+
+		// Convert to ordered map
+		record := orderedmapjson.NewAnyOrderedMap()
+		if err := yamlutil.ConvertNodeToOrderedMap(&node, record); err != nil {
+			return nil, fmt.Errorf("failed to convert record to ordered map: %w", err)
+		}
+
+		records = append(records, record)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading JSONL: %w", err)
+	}
+
+	if len(records) == 0 {
+		return nil, fmt.Errorf("no records to convert to Parquet")
+	}
+
+	// Convert records to Parquet format
+	return parquet.WriteRecordsToParquet(records)
 }
 
 func CPDToJSONL(r io.Reader) (string, error) {

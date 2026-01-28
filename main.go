@@ -24,6 +24,8 @@ var (
 	sqlMode        bool
 	joinTables     string
 	toJSONL        bool
+	toParquet      bool
+	outputFile     string
 )
 
 // detectFileFormat reads the beginning of a file to determine if it's JSONL or YAML format
@@ -166,12 +168,16 @@ func printUsage() {
 	fmt.Println("  -vvv                 Extra verbose output")
 	fmt.Println("  -sql                 Generate SQLite DDL and INSERT statements")
 	fmt.Println("  --to-jsonl           Force streaming JSONL output with carry-forward")
+	fmt.Println("  --to-parquet         Convert to Parquet format (binary output)")
+	fmt.Println("  -o, --output FILE    Write output to FILE (for binary formats)")
 	fmt.Println("  -join-tables string  Comma-separated list of fields to force as join tables")
 	fmt.Println()
 	fmt.Println("Stdin examples:")
-	fmt.Println("  cat data.yaml | ydb              # YAML → expanded JSONL")
-	fmt.Println("  ydb sparse.jsonl | ydb           # sparse → expanded → YAML")
-	fmt.Println("  cat sparse.jsonl | ydb --to-jsonl  # sparse → expanded (streaming)")
+	fmt.Println("  cat data.yaml | ydb                          # YAML → expanded JSONL")
+	fmt.Println("  ydb sparse.jsonl | ydb                       # sparse → expanded → YAML")
+	fmt.Println("  cat sparse.jsonl | ydb --to-jsonl            # sparse → expanded (streaming)")
+	fmt.Println("  ydb data.yaml --to-parquet -o out.parquet    # YAML → Parquet file")
+	fmt.Println("  ydb data.yaml --to-parquet > out.parquet     # YAML → Parquet (stdout)")
 }
 
 func parseFlags() {
@@ -202,6 +208,17 @@ func parseFlags() {
 		case arg == "--to-jsonl":
 			toJSONL = true
 			i++
+		case arg == "--to-parquet":
+			toParquet = true
+			i++
+		case arg == "-o", arg == "--output":
+			if i+1 < len(args) {
+				outputFile = args[i+1]
+				i += 2
+			} else {
+				fmt.Println("Error: -o/--output requires a value")
+				os.Exit(1)
+			}
 		case arg == "-join-tables":
 			if i+1 < len(args) {
 				joinTables = args[i+1]
@@ -245,7 +262,7 @@ func main() {
 	}
 
 	if showVersion {
-		fmt.Println("ydb version 0.0.1")
+		fmt.Println(version)
 		return
 	}
 
@@ -312,7 +329,36 @@ func main() {
 	}
 
 	var result string
+	var binaryResult []byte
 	var expandCarryForward bool
+
+	// Handle Parquet mode for YAML/CPD files
+	if toParquet {
+		if format != "yaml" {
+			fmt.Printf("Error: Parquet output only supported for YAML/CPD files\n")
+			os.Exit(1)
+		}
+		binaryResult, err = codec.CPDToParquet(strings.NewReader(string(fileData)))
+		if err != nil {
+			fmt.Printf("Error converting to Parquet: %v\n", err)
+			os.Exit(1)
+		}
+
+		if outputFile != "" {
+			// Write to file
+			if err := os.WriteFile(outputFile, binaryResult, 0644); err != nil {
+				fmt.Printf("Error writing to file %s: %v\n", outputFile, err)
+				os.Exit(1)
+			}
+			if verbosityLevel > 0 {
+				fmt.Fprintf(os.Stderr, "Wrote %d bytes to %s\n", len(binaryResult), outputFile)
+			}
+		} else {
+			// Write to stdout
+			os.Stdout.Write(binaryResult)
+		}
+		return
+	}
 
 	// Handle SQL mode for YAML/CPD files
 	if sqlMode {
