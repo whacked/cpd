@@ -24,6 +24,7 @@ var (
 	sqlMode        bool
 	joinTables     string
 	timeColumns    string
+	dataColumns    string
 	toJSONL        bool
 	toParquet      bool
 	outputFile     string
@@ -173,6 +174,7 @@ func printUsage() {
 	fmt.Println("  -o, --output FILE    Write output to FILE (for binary formats)")
 	fmt.Println("  -join-tables LIST    Comma-separated list of fields to force as join tables")
 	fmt.Println("  -time-columns LIST   Comma-separated time column candidates (default: time,timestamp)")
+	fmt.Println("  -data-columns LIST   Comma-separated fields to extract as columns (no join table)")
 	fmt.Println()
 	fmt.Println("Stdin examples:")
 	fmt.Println("  cat data.yaml | ydb                          # YAML → expanded JSONL")
@@ -235,6 +237,14 @@ func parseFlags() {
 				i += 2
 			} else {
 				fmt.Println("Error: -time-columns requires a value")
+				os.Exit(1)
+			}
+		case arg == "-data-columns":
+			if i+1 < len(args) {
+				dataColumns = args[i+1]
+				i += 2
+			} else {
+				fmt.Println("Error: -data-columns requires a value")
 				os.Exit(1)
 			}
 		case strings.HasPrefix(arg, "-"):
@@ -339,6 +349,37 @@ func main() {
 		codec.TimeColumns = timeColumnList
 	}
 
+	// Parse and set data columns if specified
+	var dataColumnList []string
+	if dataColumns != "" {
+		for _, col := range strings.Split(dataColumns, ",") {
+			if trimmed := strings.TrimSpace(col); trimmed != "" {
+				dataColumnList = append(dataColumnList, trimmed)
+			}
+		}
+		codec.DataColumns = dataColumnList
+	}
+
+	// Check for collisions between -join-tables and -data-columns
+	if joinTables != "" && dataColumns != "" {
+		joinTableSet := make(map[string]bool)
+		for _, col := range strings.Split(joinTables, ",") {
+			if trimmed := strings.TrimSpace(col); trimmed != "" {
+				joinTableSet[trimmed] = true
+			}
+		}
+		var collisions []string
+		for _, col := range dataColumnList {
+			if joinTableSet[col] {
+				collisions = append(collisions, col)
+			}
+		}
+		if len(collisions) > 0 {
+			fmt.Printf("Error: fields cannot be in both -join-tables and -data-columns: %s\n", strings.Join(collisions, ", "))
+			os.Exit(1)
+		}
+	}
+
 	if verbosityLevel > 0 {
 		fmt.Fprintf(os.Stderr, "Detected format: %s\n", format)
 		if joinTables != "" {
@@ -346,6 +387,9 @@ func main() {
 		}
 		if timeColumns != "" {
 			fmt.Fprintf(os.Stderr, "Using time columns: %s\n", timeColumns)
+		}
+		if dataColumns != "" {
+			fmt.Fprintf(os.Stderr, "Using data columns: %s\n", dataColumns)
 		}
 		if sqlMode {
 			fmt.Fprintf(os.Stderr, "SQL mode enabled\n")

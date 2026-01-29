@@ -2241,11 +2241,15 @@ func TestJSONLToCPDWithCustomTimeColumn(t *testing.T) {
 }
 
 func TestJoinTableNonStringTypes(t *testing.T) {
+	// Save and restore DataColumns after test
+	origDataColumns := DataColumns
+	defer func() { DataColumns = origDataColumns }()
+	DataColumns = nil
+
 	tests := []struct {
 		name              string
 		jsonl             string
 		joinTables        map[string]map[string]int
-		joinTableOrder    []string // Order for deterministic column output
 		wantJoinTableKeys []string // Expected keys in the join table
 		wantColumnPrefix  string   // Expected prefix in _columns
 	}{
@@ -2258,7 +2262,6 @@ func TestJoinTableNonStringTypes(t *testing.T) {
 				"exit_code": {},
 				"status":    {},
 			},
-			joinTableOrder: []string{"exit_code", "status"},
 			// Integer keys are stored as strings in join tables (0, 1)
 			wantJoinTableKeys: []string{"exit_code:", "status:"},
 			wantColumnPrefix:  "_columns: [ts, exit_code, status",
@@ -2271,7 +2274,6 @@ func TestJoinTableNonStringTypes(t *testing.T) {
 			joinTables: map[string]map[string]int{
 				"expected": {},
 			},
-			joinTableOrder: []string{"expected"},
 			// Boolean keys get quoted in YAML output ("true", "false")
 			wantJoinTableKeys: []string{`"true":`, `"false":`},
 			wantColumnPrefix:  "_columns: [ts, expected",
@@ -2285,7 +2287,6 @@ func TestJoinTableNonStringTypes(t *testing.T) {
 				"status":    {},
 				"expected":  {},
 			},
-			joinTableOrder:    []string{"exit_code", "status", "expected"},
 			wantJoinTableKeys: []string{"exit_code:", "status:", "expected:", "ok:", "error:"},
 			wantColumnPrefix:  "_columns: [ts, exit_code, status, expected",
 		},
@@ -2293,16 +2294,11 @@ func TestJoinTableNonStringTypes(t *testing.T) {
 
 	// Set time columns to use "ts"
 	origTimeColumns := TimeColumns
-	origJoinTableOrder := JoinTableOrder
-	defer func() {
-		TimeColumns = origTimeColumns
-		JoinTableOrder = origJoinTableOrder
-	}()
+	defer func() { TimeColumns = origTimeColumns }()
 	TimeColumns = []string{"ts"}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			JoinTableOrder = tt.joinTableOrder
 			result, err := JSONLToCPDWithJoinTables(strings.NewReader(tt.jsonl), tt.joinTables)
 			assert.NoError(t, err)
 
@@ -2319,14 +2315,14 @@ func TestJoinTableNonStringTypes(t *testing.T) {
 
 func TestJoinTableBoolValues(t *testing.T) {
 	// Save and restore state
+	origDataColumns := DataColumns
 	origTimeColumns := TimeColumns
-	origJoinTableOrder := JoinTableOrder
 	defer func() {
+		DataColumns = origDataColumns
 		TimeColumns = origTimeColumns
-		JoinTableOrder = origJoinTableOrder
 	}()
+	DataColumns = nil
 	TimeColumns = []string{"ts"}
-	JoinTableOrder = []string{"expected"}
 
 	jsonl := `{"ts":"2024-01-01","expected":true}
 {"ts":"2024-01-02","expected":false}`
@@ -2342,6 +2338,141 @@ func TestJoinTableBoolValues(t *testing.T) {
 	// Boolean values get quoted in YAML join table keys
 	assert.Contains(t, result, `"true":`)
 	assert.Contains(t, result, `"false":`)
+}
+
+func TestDataColumns(t *testing.T) {
+	// Save and restore state
+	origDataColumns := DataColumns
+	origTimeColumns := TimeColumns
+	defer func() {
+		DataColumns = origDataColumns
+		TimeColumns = origTimeColumns
+	}()
+	TimeColumns = []string{"ts"}
+
+	tests := []struct {
+		name                 string
+		jsonl                string
+		dataColumns          []string
+		wantColumnsContains  string
+		wantNoJoinTable      []string // These should NOT have join table definitions
+		wantContainsDirectly []string // Values that should appear directly in data rows
+	}{
+		{
+			name: "single data column",
+			jsonl: `{"ts":"2024-01-01","job_id":"abc123","status":"ok"}
+{"ts":"2024-01-02","job_id":"def456","status":"ok"}`,
+			dataColumns:          []string{"job_id"},
+			wantColumnsContains:  "_columns: [ts, job_id",
+			wantNoJoinTable:      []string{"job_id:"},
+			wantContainsDirectly: []string{`"abc123"`, `"def456"`},
+		},
+		{
+			name: "multiple data columns",
+			jsonl: `{"ts":"2024-01-01","job_id":"abc123","schema_bytes":482,"status":"ok"}
+{"ts":"2024-01-02","job_id":"def456","schema_bytes":500,"status":"ok"}`,
+			dataColumns:          []string{"job_id", "schema_bytes"},
+			wantColumnsContains:  "_columns: [ts, job_id, schema_bytes",
+			wantNoJoinTable:      []string{"job_id:", "schema_bytes:"},
+			wantContainsDirectly: []string{`"abc123"`, "482", "500"},
+		},
+		{
+			name: "data column with integers",
+			jsonl: `{"ts":"2024-01-01","instance_bytes":2290,"status":"ok"}
+{"ts":"2024-01-02","instance_bytes":2295,"status":"ok"}`,
+			dataColumns:          []string{"instance_bytes"},
+			wantColumnsContains:  "_columns: [ts, instance_bytes",
+			wantNoJoinTable:      []string{"instance_bytes:"},
+			wantContainsDirectly: []string{"2290", "2295"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			DataColumns = tt.dataColumns
+
+			result, err := JSONLToCPD(strings.NewReader(tt.jsonl))
+			assert.NoError(t, err)
+
+			// Check columns include data columns
+			assert.Contains(t, result, tt.wantColumnsContains)
+
+			// Verify no join table created for data columns
+			for _, noJoin := range tt.wantNoJoinTable {
+				assert.NotContains(t, result, noJoin, "Should NOT have join table for %s", noJoin)
+			}
+
+			// Verify values are stored directly
+			for _, directVal := range tt.wantContainsDirectly {
+				assert.Contains(t, result, directVal, "Should contain direct value %s", directVal)
+			}
+		})
+	}
+}
+
+func TestMixedJoinTablesAndDataColumns(t *testing.T) {
+	// Save and restore state
+	origDataColumns := DataColumns
+	origTimeColumns := TimeColumns
+	defer func() {
+		DataColumns = origDataColumns
+		TimeColumns = origTimeColumns
+	}()
+	TimeColumns = []string{"ts"}
+	DataColumns = []string{"schema_bytes"}
+
+	jsonl := `{"ts":"2024-01-01","status":"ok","exit_code":1,"schema_bytes":482}
+{"ts":"2024-01-02","status":"error","exit_code":0,"schema_bytes":500}`
+
+	joinTables := map[string]map[string]int{
+		"status":    {},
+		"exit_code": {},
+	}
+
+	result, err := JSONLToCPDWithJoinTables(strings.NewReader(jsonl), joinTables)
+	assert.NoError(t, err)
+
+	// Check columns include both join tables and data columns
+	assert.Contains(t, result, "_columns: [ts, status, exit_code, schema_bytes")
+
+	// Verify status and exit_code have join table definitions
+	assert.Contains(t, result, "status:")
+	assert.Contains(t, result, "exit_code:")
+
+	// Verify schema_bytes does NOT have join table definition
+	assert.NotContains(t, result, "schema_bytes:")
+
+	// Verify schema_bytes values are stored directly
+	assert.Contains(t, result, "482")
+	assert.Contains(t, result, "500")
+}
+
+func TestDataColumnsWithNullValues(t *testing.T) {
+	// Save and restore state
+	origDataColumns := DataColumns
+	origTimeColumns := TimeColumns
+	defer func() {
+		DataColumns = origDataColumns
+		TimeColumns = origTimeColumns
+	}()
+	TimeColumns = []string{"ts"}
+	DataColumns = []string{"job_id"}
+
+	jsonl := `{"ts":"2024-01-01","job_id":"abc123","status":"ok"}
+{"ts":"2024-01-02","job_id":null,"status":"ok"}
+{"ts":"2024-01-03","status":"ok"}`
+
+	result, err := JSONLToCPD(strings.NewReader(jsonl))
+	assert.NoError(t, err)
+
+	// Check columns include data column
+	assert.Contains(t, result, "_columns: [ts, job_id")
+
+	// Verify first row has the value
+	assert.Contains(t, result, `"abc123"`)
+
+	// Verify null/missing values result in ~ in output
+	assert.Contains(t, result, "~")
 }
 
 func TestValueToJoinKey(t *testing.T) {

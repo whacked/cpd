@@ -39,6 +39,10 @@ var DefaultTimeColumns = []string{"time", "timestamp"}
 // If nil, DefaultTimeColumns is used. Set this from CLI flags to override.
 var TimeColumns []string
 
+// DataColumns is a list of fields to extract as columns without join table semantics.
+// Set from CLI -data-columns flag.
+var DataColumns []string
+
 // JoinTableOrder is the ordered list of join table field names from CLI.
 // Used to ensure deterministic column ordering in output.
 var JoinTableOrder []string
@@ -1911,19 +1915,28 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		}
 	}
 
-	// Collect all unique field names from records (excluding time/timestamp and join fields)
+	// Add data columns (no join table, just positional)
+	dataColumnSet := make(map[string]bool)
+	for _, col := range DataColumns {
+		if col != timeColumn && !joinFields.Has(col) {
+			columns = append(columns, col)
+			dataColumnSet[col] = true
+		}
+	}
+
+	// Collect all unique field names from records (excluding time/timestamp, join fields, and data columns)
 	allFields := make(map[string]bool)
 	for _, rec := range allRecords {
 		for el := rec.Front(); el != nil; el = el.Next() {
 			field := el.Key
-			// Skip time/timestamp and fields already identified as join tables
-			if field != timeColumn && !joinFields.Has(field) {
+			// Skip time/timestamp, fields already identified as join tables, and data columns
+			if field != timeColumn && !joinFields.Has(field) && !dataColumnSet[field] {
 				allFields[field] = true
 			}
 		}
 	}
 
-	// Add single payload column if there are non-join fields
+	// Add single payload column if there are non-join, non-data-column fields
 	if len(allFields) > 0 {
 		columns = append(columns, "payload")
 	}
@@ -2078,21 +2091,28 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 			colIndex++
 		}
 
-		// Handle join fields, payload, or regular fields
+		// Handle join fields, data columns, payload, or regular fields
 		for i := colIndex; i < len(columns); i++ {
 			col := columns[i]
 			if col == "payload" {
-				// Collect all non-join, non-time fields into payload object
+				// Collect all non-join, non-time, non-data-column fields into payload object
 				payloadMap := orderedmapjson.NewAnyOrderedMap()
 				for el := record.Front(); el != nil; el = el.Next() {
 					field := el.Key
-					// Skip time/timestamp and join table fields
-					if field != timeColumn && !joinFields.Has(field) {
+					// Skip time/timestamp, join table fields, and data columns
+					if field != timeColumn && !joinFields.Has(field) && !dataColumnSet[field] {
 						payloadMap.Set(field, el.Value)
 					}
 				}
 				if payloadMap.Len() > 0 {
 					rowValues[i] = payloadMap
+				} else {
+					rowValues[i] = nil
+				}
+			} else if dataColumnSet[col] {
+				// Data column - extract value directly, no join table transformation
+				if value, exists := record.Get(col); exists {
+					rowValues[i] = value
 				} else {
 					rowValues[i] = nil
 				}
