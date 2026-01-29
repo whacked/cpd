@@ -410,15 +410,18 @@ func main() {
 				} else {
 					// Convert expanded JSONL to CPD YAML
 					if joinTables != "" {
-						// Parse join tables from flag
+						// Parse join tables from flag, preserving order
 						joinTableFields := strings.Split(joinTables, ",")
 						joinTablesMap := make(map[string]map[string]int)
+						var joinTableOrder []string
 						for _, field := range joinTableFields {
 							field = strings.TrimSpace(field)
 							if field != "" {
 								joinTablesMap[field] = make(map[string]int)
+								joinTableOrder = append(joinTableOrder, field)
 							}
 						}
+						codec.JoinTableOrder = joinTableOrder
 						result, err = codec.JSONLToCPDWithJoinTables(strings.NewReader(string(fileData)), joinTablesMap)
 					} else {
 						result, err = codec.JSONLToCPD(strings.NewReader(string(fileData)))

@@ -2239,3 +2239,179 @@ func TestJSONLToCPDWithCustomTimeColumn(t *testing.T) {
 		})
 	}
 }
+
+func TestJoinTableNonStringTypes(t *testing.T) {
+	tests := []struct {
+		name              string
+		jsonl             string
+		joinTables        map[string]map[string]int
+		joinTableOrder    []string // Order for deterministic column output
+		wantJoinTableKeys []string // Expected keys in the join table
+		wantColumnPrefix  string   // Expected prefix in _columns
+	}{
+		{
+			name: "integer join table values",
+			jsonl: `{"ts":"2024-01-01","exit_code":1,"status":"ok"}
+{"ts":"2024-01-02","exit_code":0,"status":"error"}
+{"ts":"2024-01-03","exit_code":1,"status":"ok"}`,
+			joinTables: map[string]map[string]int{
+				"exit_code": {},
+				"status":    {},
+			},
+			joinTableOrder: []string{"exit_code", "status"},
+			// Integer keys are stored as strings in join tables (0, 1)
+			wantJoinTableKeys: []string{"exit_code:", "status:"},
+			wantColumnPrefix:  "_columns: [ts, exit_code, status",
+		},
+		{
+			name: "boolean join table values",
+			jsonl: `{"ts":"2024-01-01","expected":true}
+{"ts":"2024-01-02","expected":false}
+{"ts":"2024-01-03","expected":true}`,
+			joinTables: map[string]map[string]int{
+				"expected": {},
+			},
+			joinTableOrder: []string{"expected"},
+			// Boolean keys get quoted in YAML output ("true", "false")
+			wantJoinTableKeys: []string{`"true":`, `"false":`},
+			wantColumnPrefix:  "_columns: [ts, expected",
+		},
+		{
+			name: "mixed types in join table",
+			jsonl: `{"ts":"2024-01-01","exit_code":1,"status":"ok","expected":true}
+{"ts":"2024-01-02","exit_code":0,"status":"error","expected":false}`,
+			joinTables: map[string]map[string]int{
+				"exit_code": {},
+				"status":    {},
+				"expected":  {},
+			},
+			joinTableOrder:    []string{"exit_code", "status", "expected"},
+			wantJoinTableKeys: []string{"exit_code:", "status:", "expected:", "ok:", "error:"},
+			wantColumnPrefix:  "_columns: [ts, exit_code, status, expected",
+		},
+	}
+
+	// Set time columns to use "ts"
+	origTimeColumns := TimeColumns
+	origJoinTableOrder := JoinTableOrder
+	defer func() {
+		TimeColumns = origTimeColumns
+		JoinTableOrder = origJoinTableOrder
+	}()
+	TimeColumns = []string{"ts"}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			JoinTableOrder = tt.joinTableOrder
+			result, err := JSONLToCPDWithJoinTables(strings.NewReader(tt.jsonl), tt.joinTables)
+			assert.NoError(t, err)
+
+			// Check columns
+			assert.Contains(t, result, tt.wantColumnPrefix)
+
+			// Check that expected join table keys are present
+			for _, key := range tt.wantJoinTableKeys {
+				assert.Contains(t, result, key, "Expected join table key %s not found in result", key)
+			}
+		})
+	}
+}
+
+func TestJoinTableBoolValues(t *testing.T) {
+	// Save and restore state
+	origTimeColumns := TimeColumns
+	origJoinTableOrder := JoinTableOrder
+	defer func() {
+		TimeColumns = origTimeColumns
+		JoinTableOrder = origJoinTableOrder
+	}()
+	TimeColumns = []string{"ts"}
+	JoinTableOrder = []string{"expected"}
+
+	jsonl := `{"ts":"2024-01-01","expected":true}
+{"ts":"2024-01-02","expected":false}`
+
+	joinTables := map[string]map[string]int{
+		"expected": {},
+	}
+
+	result, err := JSONLToCPDWithJoinTables(strings.NewReader(jsonl), joinTables)
+	assert.NoError(t, err)
+
+	assert.Contains(t, result, "expected:")
+	// Boolean values get quoted in YAML join table keys
+	assert.Contains(t, result, `"true":`)
+	assert.Contains(t, result, `"false":`)
+}
+
+func TestValueToJoinKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		wantKey  string
+		wantNil  bool
+	}{
+		{
+			name:    "string value",
+			input:   "hello",
+			wantKey: "hello",
+			wantNil: false,
+		},
+		{
+			name:    "empty string",
+			input:   "",
+			wantKey: "",
+			wantNil: false, // Empty string is valid, not nil
+		},
+		{
+			name:    "nil value",
+			input:   nil,
+			wantKey: "",
+			wantNil: true,
+		},
+		{
+			name:    "int value",
+			input:   42,
+			wantKey: "42",
+			wantNil: false,
+		},
+		{
+			name:    "int64 value",
+			input:   int64(9223372036854775807),
+			wantKey: "9223372036854775807",
+			wantNil: false,
+		},
+		{
+			name:    "float64 integer value",
+			input:   float64(482),
+			wantKey: "482",
+			wantNil: false,
+		},
+		{
+			name:    "float64 decimal value",
+			input:   float64(3.14159),
+			wantKey: "3.14159",
+			wantNil: false,
+		},
+		{
+			name:    "bool true",
+			input:   true,
+			wantKey: "true",
+			wantNil: false,
+		},
+		{
+			name:    "bool false",
+			input:   false,
+			wantKey: "false",
+			wantNil: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, isNil := valueToJoinKey(tt.input)
+			assert.Equal(t, tt.wantKey, key)
+			assert.Equal(t, tt.wantNil, isNil)
+		})
+	}
+}

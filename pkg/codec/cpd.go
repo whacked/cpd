@@ -39,6 +39,34 @@ var DefaultTimeColumns = []string{"time", "timestamp"}
 // If nil, DefaultTimeColumns is used. Set this from CLI flags to override.
 var TimeColumns []string
 
+// JoinTableOrder is the ordered list of join table field names from CLI.
+// Used to ensure deterministic column ordering in output.
+var JoinTableOrder []string
+
+// valueToJoinKey converts any scalar value to a string key for join tables.
+// Returns the string key and a boolean indicating if the value was nil.
+// Empty strings ARE valid keys (only nil returns isNil=true).
+func valueToJoinKey(v interface{}) (key string, isNil bool) {
+	if v == nil {
+		return "", true
+	}
+	switch val := v.(type) {
+	case string:
+		return val, false // Empty string is valid!
+	case int:
+		return strconv.Itoa(val), false
+	case int64:
+		return strconv.FormatInt(val, 10), false
+	case float64:
+		// Preserve precision - use FormatFloat with full precision
+		return strconv.FormatFloat(val, 'f', -1, 64), false
+	case bool:
+		return strconv.FormatBool(val), false
+	default:
+		return fmt.Sprintf("%v", val), false
+	}
+}
+
 // isTimeColumn checks if a column name is in the time columns list
 func isTimeColumn(colName string, timeColumns []string) bool {
 	if timeColumns == nil {
@@ -1750,10 +1778,21 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 	joinFields := orderedmapjson.NewAnyOrderedMap()
 
 	if joinTables != nil {
-		// Use pre-specified join tables
-		for field := range joinTables {
-			joinFields.Set(field, true)
-			columns = append(columns, field)
+		// Use pre-specified join tables in CLI order
+		if len(JoinTableOrder) > 0 {
+			// Use the ordered list from CLI
+			for _, field := range JoinTableOrder {
+				if _, exists := joinTables[field]; exists {
+					joinFields.Set(field, true)
+					columns = append(columns, field)
+				}
+			}
+		} else {
+			// Fallback to map iteration (non-deterministic)
+			for field := range joinTables {
+				joinFields.Set(field, true)
+				columns = append(columns, field)
+			}
 		}
 	} else {
 		// Auto-detect join tables using TableDeriver
@@ -1907,18 +1946,21 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 				// Go through all records to find first appearance order
 				for _, record := range allRecords {
 					if value, exists := record.Get(field); exists {
-						switch v := value.(type) {
-						case string:
-							if v != "" && firstAppearance[v] == 0 {
-								firstAppearance[v] = order
-								order++
-							}
-						case []interface{}:
-							for _, item := range v {
-								if str, ok := item.(string); ok && str != "" && firstAppearance[str] == 0 {
-									firstAppearance[str] = order
+						// Handle arrays first
+						if arr, ok := value.([]interface{}); ok {
+							for _, item := range arr {
+								keyStr, isNil := valueToJoinKey(item)
+								if !isNil && keyStr != "" && firstAppearance[keyStr] == 0 {
+									firstAppearance[keyStr] = order
 									order++
 								}
+							}
+						} else {
+							// Scalar value
+							keyStr, isNil := valueToJoinKey(value)
+							if !isNil && keyStr != "" && firstAppearance[keyStr] == 0 {
+								firstAppearance[keyStr] = order
+								order++
 							}
 						}
 					}
@@ -1950,18 +1992,21 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 			// Go through all records to find first appearance order
 			for _, record := range allRecords {
 				if value, exists := record.Get(field); exists {
-					switch v := value.(type) {
-					case string:
-						if v != "" && firstAppearance[v] == 0 {
-							firstAppearance[v] = order
-							order++
-						}
-					case []interface{}:
-						for _, item := range v {
-							if str, ok := item.(string); ok && str != "" && firstAppearance[str] == 0 {
-								firstAppearance[str] = order
+					// Handle arrays first
+					if arr, ok := value.([]interface{}); ok {
+						for _, item := range arr {
+							keyStr, isNil := valueToJoinKey(item)
+							if !isNil && keyStr != "" && firstAppearance[keyStr] == 0 {
+								firstAppearance[keyStr] = order
 								order++
 							}
+						}
+					} else {
+						// Scalar value
+						keyStr, isNil := valueToJoinKey(value)
+						if !isNil && keyStr != "" && firstAppearance[keyStr] == 0 {
+							firstAppearance[keyStr] = order
+							order++
 						}
 					}
 				}
@@ -2053,25 +2098,13 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 				}
 			} else if joinTable, isJoin := finalJoinTables[col]; isJoin {
 				if value, exists := record.Get(col); exists {
-					switch v := value.(type) {
-					case string:
-						if v != "" {
-							if id, ok := joinTable[v]; ok {
-								rowValues[i] = id
-							} else {
-								rowValues[i] = nil // Unknown value, use null
-							}
-						} else {
-							rowValues[i] = nil // Empty string, use null
-						}
-					case []interface{}:
+					// Handle arrays
+					if arr, ok := value.([]interface{}); ok {
 						var ids []interface{}
-						for _, item := range v {
-							if str, ok := item.(string); ok {
-								if str == "" {
-									continue // Skip empty strings in arrays
-								}
-								if id, ok := joinTable[str]; ok {
+						for _, item := range arr {
+							keyStr, isNil := valueToJoinKey(item)
+							if !isNil && keyStr != "" {
+								if id, ok := joinTable[keyStr]; ok {
 									ids = append(ids, id)
 								}
 							}
@@ -2079,10 +2112,20 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 						if len(ids) > 0 {
 							rowValues[i] = ids
 						} else {
-							rowValues[i] = nil // Empty array or no valid IDs
+							rowValues[i] = nil
 						}
-					default:
-						rowValues[i] = nil
+					} else {
+						// Scalar value
+						keyStr, isNil := valueToJoinKey(value)
+						if isNil {
+							rowValues[i] = nil // Input was null
+						} else if keyStr == "" {
+							rowValues[i] = nil // Empty string, use null
+						} else if id, ok := joinTable[keyStr]; ok {
+							rowValues[i] = id
+						} else {
+							rowValues[i] = nil // Unknown value (not in join table)
+						}
 					}
 				} else {
 					rowValues[i] = nil
