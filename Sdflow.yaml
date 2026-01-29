@@ -6,7 +6,9 @@ build:
   run: go build -o $out $in
 
 version.go:
-  in: Sdflow.yaml
+  in:
+    - Sdflow.yaml
+    - version.go
   out: version.go
   run: |
     today=$(date +%Y%m%d)
