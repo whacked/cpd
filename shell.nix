@@ -1,7 +1,7 @@
 { pkgs ? (
     let
       inherit (builtins) fetchTree fromJSON readFile;
-      inherit ((fromJSON (readFile ./../jdxd/flake.lock)).nodes) nixpkgs gomod2nix;
+      inherit ((fromJSON (readFile ./flake.lock)).nodes) nixpkgs gomod2nix;
     in
     import (fetchTree nixpkgs.locked) {
       overlays = [
@@ -11,13 +11,15 @@
   )
 , mkGoEnv ? pkgs.mkGoEnv
 , gomod2nix ? pkgs.gomod2nix
+, sdflow ? null
 }:
 
 let
-  goEnv = mkGoEnv { pwd = ./.; go = pkgs.go_1_23; };
+  goEnv = mkGoEnv { pwd = ./.; go = pkgs.go_1_24; };
 
-  # Add sdflow from flake
-  sdflow = (builtins.getFlake "github:whacked/sdflow").packages.${pkgs.system}.default;
+  # Use sdflow from parameter (flake) or fetch directly (nix-shell standalone)
+  sdflowPkg = if sdflow != null then sdflow
+    else (builtins.getFlake "github:whacked/sdflow").packages.${pkgs.system}.default;
 
   go-jsonschema = pkgs.stdenv.mkDerivation {
     name = "go-jsonschema";
@@ -46,13 +48,11 @@ pkgs.mkShell {
     go-jsonschema
     pkgs.check-jsonschema
     pkgs.mdsh
-    sdflow
+    sdflowPkg
   ];  # join lists with ++
 
+  # User-specific shell extensions can be sourced in shellHook if available
   nativeBuildInputs = [
-    ~/setup/bash/git_shortcuts.sh
-    ~/setup/bash/nix_shortcuts.nix.sh
-    ~/setup/bash/node_shortcuts.sh
   ];
 
   name = "yamdb-go";
@@ -158,6 +158,10 @@ pkgs.mkShell {
     eval "$(sdflow --completions bash)"
     #ensure-goenv $name
     unset TMP TMPDIR TEMP TEMPDIR
-    echo-shortcuts ${__curPos.file}
+    # Source user shortcuts if available
+    for f in ~/setup/bash/git_shortcuts.sh ~/setup/bash/nix_shortcuts.nix.sh ~/setup/bash/node_shortcuts.sh; do
+      [ -f "$f" ] && source "$f"
+    done
+    type echo-shortcuts &>/dev/null && echo-shortcuts ${__curPos.file}
   '';  # join strings with +
 }

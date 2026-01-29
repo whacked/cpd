@@ -1,0 +1,29 @@
+{ pkgs ? (
+    let
+      inherit (builtins) fetchTree fromJSON readFile;
+      inherit ((fromJSON (readFile ./flake.lock)).nodes) nixpkgs gomod2nix;
+    in
+    import (fetchTree nixpkgs.locked) {
+      overlays = [
+        (import "${fetchTree gomod2nix.locked}/overlay.nix")
+      ];
+    }
+  )
+, buildGoApplication ? pkgs.buildGoApplication
+}:
+
+buildGoApplication {
+  pname = "ydb";
+  version = "20260129.1.c028575";
+  pwd = ./.;
+  src = ./.;
+  modules = ./gomod2nix.toml;
+  CGO_ENABLED = 0;
+  flags = [
+    "-mod=readonly"
+  ];
+  doCheck = false;
+  postInstall = ''
+    mv $out/bin/yamdb $out/bin/ydb
+  '';
+}

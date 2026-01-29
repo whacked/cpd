@@ -2,9 +2,12 @@ package sqlite
 
 import (
     "database/sql"
-    "github.com/mattn/go-sqlite3"
+    "fmt"
+    "io"
+
+    _ "github.com/mattn/go-sqlite3"
+    yio "github.com/whacked/yamdb/pkg/io"
     "github.com/whacked/yamdb/pkg/types"
-    "github.com/whacked/yamdb/pkg/io"
 )
 
 type sqliteReader struct {
@@ -14,7 +17,7 @@ type sqliteReader struct {
     rows   *sql.Rows
 }
 
-func NewReader(dbPath string, opts ...io.ReaderOption) (io.Reader, error) {
+func NewReader(dbPath string, opts ...yio.ReaderOption) (yio.Reader, error) {
     db, err := sql.Open("sqlite3", dbPath)
     if err != nil {
         return nil, fmt.Errorf("failed to open database: %w", err)
