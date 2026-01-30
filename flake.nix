@@ -1,5 +1,5 @@
 {
-  nixConfig.bash-prompt = ''\033[1;32m\[[ydb-dev:\[\033[36m\]\w\[\033[32m\]]$\033[0m '';
+  nixConfig.bash-prompt = ''\033[1;32m\[[cpd-dev:\[\033[36m\]\w\[\033[32m\]]$\033[0m '';
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
@@ -21,20 +21,20 @@
           callPackage = pkgs.darwin.apple_sdk_12_0.callPackage or pkgs.callPackage;
         in
         let
-          ydb = callPackage ./. {
+          cpd = callPackage ./. {
             inherit (gomod2nix.legacyPackages.${system}) buildGoApplication;
           };
         in
         {
           packages = {
-            default = ydb;
-            ydb = ydb;
+            default = cpd;
+            cpd = cpd;
           };
 
           apps = {
             default = {
               type = "app";
-              program = "${ydb}/bin/ydb";
+              program = "${cpd}/bin/cpd";
             };
           };
 

@@ -2,7 +2,7 @@ build:
   in:
     - main.go
     - version.go
-  out: ./ydb
+  out: ./cpd
   run: go build -o $out $in
 
 version.go:
@@ -31,3 +31,39 @@ yaml-database-schema:
   run: |
     test -d $(dirname $in) || mkdir -p $(dirname $out)
     jsonnet $in | jq -S | tee $out
+
+
+
+# test stuff
+test:
+  #go test -v ./pkg/codec -run TestCPDToSQLite
+  run: go test -v ./pkg/codec
+
+copy-data-file:
+  in: /Users/alexh/cloudsync/orgzly/biolog-combined.json
+  out: /tmp/biolog-combined.jsonl
+  run: cp -i $in $out
+
+yaml-generation-test:
+  in:
+    - asdf.go
+    - /tmp/biolog-combined.jsonl
+  run: go run ${in[0]} -demo cpd -join-tables device,category -cpd-file ${in[1]} | sed -n '/^_columns:/,$p' | tee $out
+  out: /tmp/biolog-combined.cpd.yaml
+
+jsonl-recovery-test:
+  in:
+    - asdf.go
+    - /tmp/biolog-combined.cpd.yaml
+  out: /tmp/biolog-combined.recovered.jsonl
+  run: go run ${in[0]} -demo cpd -cpd-file ${in[1]} | sed -n '/^{/,$p' | tee $out
+
+compare-recovered-file:
+  in:
+    - /tmp/biolog-combined.jsonl
+    - /tmp/biolog-combined.recovered.jsonl
+  run: diff -u <(jq -c -S '.' ${in[0]} | sort -u) <(jq -c -S '.' ${in[1]} | sort -u)
+
+tosql-test:
+  in: /tmp/biolog-combined.cpd.yaml
+  run: go run asdf.go -demo cpd -cpd-file $in -toSql

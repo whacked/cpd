@@ -121,7 +121,7 @@ func TestRoundTrip_ExpandedJSONL_Stability(t *testing.T) {
 }
 
 // TestRoundTrip_Pipeline_Simulation simulates the CLI pipeline:
-// sparse.jsonl | ydb --to-jsonl | ydb --to-jsonl | ydb | ydb
+// sparse.jsonl | cpd --to-jsonl | cpd --to-jsonl | cpd | cpd
 func TestRoundTrip_Pipeline_Simulation(t *testing.T) {
 	// This test expects null values to be preserved
 	defer func() { OmitMissingColumns = true }()
@@ -131,17 +131,17 @@ func TestRoundTrip_Pipeline_Simulation(t *testing.T) {
 	sparseData, err := os.ReadFile("testdata/meta_version.jsonl")
 	require.NoError(t, err)
 
-	// Pass 1: sparse | ydb --to-jsonl  (sparse → expanded)
+	// Pass 1: sparse | cpd --to-jsonl  (sparse → expanded)
 	pass1 := processJSONLWithCarryForward(t, string(sparseData))
 
-	// Pass 2: expanded | ydb --to-jsonl  (should be idempotent)
+	// Pass 2: expanded | cpd --to-jsonl  (should be idempotent)
 	pass2 := processJSONLWithCarryForward(t, pass1)
 
-	// Pass 3: expanded | ydb  (expanded → YAML)
+	// Pass 3: expanded | cpd  (expanded → YAML)
 	yaml1, err := JSONLToCPD(strings.NewReader(pass2))
 	require.NoError(t, err)
 
-	// Pass 4: yaml | ydb  (YAML → expanded)
+	// Pass 4: yaml | cpd  (YAML → expanded)
 	jsonl1, err := CPDToJSONLUnified(strings.NewReader(yaml1))
 	require.NoError(t, err)
 

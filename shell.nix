@@ -55,7 +55,7 @@ pkgs.mkShell {
   nativeBuildInputs = [
   ];
 
-  name = "yamdb-go";
+  name = "cpd-go";
 
   shellHook = ''
     sqlite-query() {

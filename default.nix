@@ -13,7 +13,7 @@
 }:
 
 buildGoApplication {
-  pname = "ydb";
+  pname = "cpd";
   version = "20260129.1.c028575";
   pwd = ./.;
   src = ./.;
@@ -24,6 +24,6 @@ buildGoApplication {
   ];
   doCheck = false;
   postInstall = ''
-    mv $out/bin/yamdb $out/bin/ydb
+    mv $out/bin/yamdb $out/bin/cpd
   '';
 }

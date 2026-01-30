@@ -146,10 +146,10 @@ func isSparseJSONL(data string) bool {
 }
 
 func printUsage() {
-	fmt.Println("ydb - CommonPayloadData toolkit")
+	fmt.Println("cpd - CommonPayloadData toolkit")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  ydb [flags] <file>")
+	fmt.Println("  cpd [flags] <file>")
 	fmt.Println()
 	fmt.Println("Description:")
 	fmt.Println("  Convert between JSONL and CPD YAML formats")
@@ -158,10 +158,10 @@ func printUsage() {
 	fmt.Println("    .yaml/.yml   → JSONL")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  ydb data.jsonl                           # Convert to CPD YAML")
-	fmt.Println("  ydb data.yaml                            # Convert to JSONL")
-	fmt.Println("  ydb data.yaml -sql                       # Generate SQLite DDL/INSERT")
-	fmt.Println("  ydb data.jsonl -join-tables category,device  # Force join tables")
+	fmt.Println("  cpd data.jsonl                           # Convert to CPD YAML")
+	fmt.Println("  cpd data.yaml                            # Convert to JSONL")
+	fmt.Println("  cpd data.yaml -sql                       # Generate SQLite DDL/INSERT")
+	fmt.Println("  cpd data.jsonl -join-tables category,device  # Force join tables")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  -h, --help           Show help information")
@@ -177,11 +177,11 @@ func printUsage() {
 	fmt.Println("  -data-columns LIST   Comma-separated fields to extract as columns (no join table)")
 	fmt.Println()
 	fmt.Println("Stdin examples:")
-	fmt.Println("  cat data.yaml | ydb                          # YAML → expanded JSONL")
-	fmt.Println("  ydb sparse.jsonl | ydb                       # sparse → expanded → YAML")
-	fmt.Println("  cat sparse.jsonl | ydb --to-jsonl            # sparse → expanded (streaming)")
-	fmt.Println("  ydb data.yaml --to-parquet -o out.parquet    # YAML → Parquet file")
-	fmt.Println("  ydb data.yaml --to-parquet > out.parquet     # YAML → Parquet (stdout)")
+	fmt.Println("  cat data.yaml | cpd                          # YAML → expanded JSONL")
+	fmt.Println("  cpd sparse.jsonl | cpd                       # sparse → expanded → YAML")
+	fmt.Println("  cat sparse.jsonl | cpd --to-jsonl            # sparse → expanded (streaming)")
+	fmt.Println("  cpd data.yaml --to-parquet -o out.parquet    # YAML → Parquet file")
+	fmt.Println("  cpd data.yaml --to-parquet > out.parquet     # YAML → Parquet (stdout)")
 }
 
 func parseFlags() {

@@ -94,7 +94,7 @@ When converting JSONL to CPD format, the converter auto-detects a **time column*
 
 **CLI override:**
 ```bash
-ydb data.jsonl -time-columns time,timestamp,ts,created_at
+cpd data.jsonl -time-columns time,timestamp,ts,created_at
 ```
 
 The first matching column found in the data becomes the time column and is placed first in `_columns`.
