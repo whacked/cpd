@@ -2475,6 +2475,107 @@ func TestDataColumnsWithNullValues(t *testing.T) {
 	assert.Contains(t, result, "~")
 }
 
+func TestDespace(t *testing.T) {
+	t.Run("default spacing in top-level array", func(t *testing.T) {
+		origSep := ArraySeparator
+		origOrder := JoinTableOrder
+		defer func() { ArraySeparator = origSep; JoinTableOrder = origOrder }()
+		ArraySeparator = ", "
+		JoinTableOrder = []string{"status"}
+
+		input := `{"name":"alice","status":"ok"}
+{"name":"bob","status":"error"}`
+		joinTablesMap := map[string]map[string]int{"status": {}}
+		result, err := JSONLToCPDWithJoinTables(strings.NewReader(input), joinTablesMap)
+		assert.NoError(t, err)
+		// columns: [status, payload] — name ends up in payload object
+		assert.Contains(t, result, `[1, {name: "alice"}]`, "spaces after commas in top-level array")
+		assert.Contains(t, result, `[2, {name: "bob"}]`, "spaces after commas in top-level array")
+	})
+
+	t.Run("despaced top-level array", func(t *testing.T) {
+		origSep := ArraySeparator
+		origOrder := JoinTableOrder
+		defer func() { ArraySeparator = origSep; JoinTableOrder = origOrder }()
+		ArraySeparator = ","
+		JoinTableOrder = []string{"status"}
+
+		input := `{"name":"alice","status":"ok"}
+{"name":"bob","status":"error"}`
+		joinTablesMap := map[string]map[string]int{"status": {}}
+		result, err := JSONLToCPDWithJoinTables(strings.NewReader(input), joinTablesMap)
+		assert.NoError(t, err)
+		// columns: [status, payload] — name ends up in payload object
+		assert.Contains(t, result, `[1,{name: "alice"}]`, "no spaces after commas")
+		assert.Contains(t, result, `[2,{name: "bob"}]`, "no spaces after commas")
+	})
+
+	t.Run("despace preserves colon-space in payload objects", func(t *testing.T) {
+		origSep := ArraySeparator
+		defer func() { ArraySeparator = origSep }()
+		ArraySeparator = ","
+
+		input := `{"key":"val","num":1}`
+		result, err := JSONLToCPD(strings.NewReader(input))
+		assert.NoError(t, err)
+		assert.Contains(t, result, `key: "val"`, "colon-space must be preserved")
+		assert.Contains(t, result, `num: 1`, "colon-space must be preserved")
+		assert.NotContains(t, result, `key:"val"`, "colon-space must NOT be removed")
+	})
+
+	t.Run("despace object entry separator", func(t *testing.T) {
+		origSep := ArraySeparator
+		defer func() { ArraySeparator = origSep }()
+		ArraySeparator = ","
+
+		input := `{"a":1,"b":"two","c":true}`
+		result, err := JSONLToCPD(strings.NewReader(input))
+		assert.NoError(t, err)
+		assert.Contains(t, result, `{a: 1,b: "two",c: true}`, "commas between object entries despaced")
+	})
+
+	t.Run("default spacing in object entry separator", func(t *testing.T) {
+		origSep := ArraySeparator
+		defer func() { ArraySeparator = origSep }()
+		ArraySeparator = ", "
+
+		input := `{"a":1,"b":"two","c":true}`
+		result, err := JSONLToCPD(strings.NewReader(input))
+		assert.NoError(t, err)
+		assert.Contains(t, result, `{a: 1, b: "two", c: true}`, "spaces between object entries")
+	})
+
+	t.Run("despace join table array IDs", func(t *testing.T) {
+		origSep := ArraySeparator
+		origOrder := JoinTableOrder
+		defer func() { ArraySeparator = origSep; JoinTableOrder = origOrder }()
+		ArraySeparator = ","
+		JoinTableOrder = []string{"roles"}
+
+		input := `{"roles":["admin","user"]}
+{"roles":["user"]}`
+		joinTablesMap := map[string]map[string]int{"roles": {}}
+		result, err := JSONLToCPDWithJoinTables(strings.NewReader(input), joinTablesMap)
+		assert.NoError(t, err)
+		assert.Contains(t, result, `[1,2]`, "join table array IDs despaced")
+	})
+
+	t.Run("default spacing join table array IDs", func(t *testing.T) {
+		origSep := ArraySeparator
+		origOrder := JoinTableOrder
+		defer func() { ArraySeparator = origSep; JoinTableOrder = origOrder }()
+		ArraySeparator = ", "
+		JoinTableOrder = []string{"roles"}
+
+		input := `{"roles":["admin","user"]}
+{"roles":["user"]}`
+		joinTablesMap := map[string]map[string]int{"roles": {}}
+		result, err := JSONLToCPDWithJoinTables(strings.NewReader(input), joinTablesMap)
+		assert.NoError(t, err)
+		assert.Contains(t, result, `[1, 2]`, "join table array IDs with default spacing")
+	})
+}
+
 func TestValueToJoinKey(t *testing.T) {
 	tests := []struct {
 		name     string

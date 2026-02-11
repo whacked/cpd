@@ -25,6 +25,7 @@ var (
 	joinTables     string
 	timeColumns    string
 	dataColumns    string
+	despace        bool
 	toJSONL        bool
 	toParquet      bool
 	outputFile     string
@@ -175,6 +176,7 @@ func printUsage() {
 	fmt.Println("  -join-tables LIST    Comma-separated list of fields to force as join tables")
 	fmt.Println("  -time-columns LIST   Comma-separated time column candidates (default: time,timestamp)")
 	fmt.Println("  -data-columns LIST   Comma-separated fields to extract as columns (no join table)")
+	fmt.Println("  -despace             Remove spaces after commas in data rows for compact output")
 	fmt.Println()
 	fmt.Println("Stdin examples:")
 	fmt.Println("  cat data.yaml | cpd                          # YAML → expanded JSONL")
@@ -247,6 +249,9 @@ func parseFlags() {
 				fmt.Println("Error: -data-columns requires a value")
 				os.Exit(1)
 			}
+		case arg == "-despace":
+			despace = true
+			i++
 		case strings.HasPrefix(arg, "-"):
 			fmt.Printf("Error: Unknown flag %s\n", arg)
 			os.Exit(1)
@@ -337,6 +342,10 @@ func main() {
 
 	// Set global verbosity level for codec package
 	codec.VerbosityLevel = verbosityLevel
+
+	if despace {
+		codec.ArraySeparator = ","
+	}
 
 	// Parse and set time columns if specified
 	if timeColumns != "" {

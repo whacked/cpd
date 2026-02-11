@@ -2245,11 +2245,12 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 					keyIndex := 0
 					for el := v.Front(); el != nil; el = el.Next() {
 						if keyIndex > 0 {
-							// consistent spacing inside object for readability
-							buf.WriteString(", ")
+							buf.WriteString(ArraySeparator)
 						}
 						keyIndex++
 						buf.WriteString(formatYAMLKey(el.Key))
+						// YAML spec requires space after colon in flow mappings.
+						// Without it, "key:value" is parsed as a plain scalar, not a key-value pair.
 						buf.WriteString(": ")
 						buf.WriteString(formatYAMLValue(el.Value))
 					}
