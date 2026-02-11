@@ -1389,51 +1389,58 @@ func ParseValue(valStr string, joinTable *JoinTable, isJoin bool) (interface{}, 
 		return nil, nil
 	}
 
-	// Handle arrays (for join tables)
+	// Handle arrays
 	if strings.HasPrefix(valStr, "[") && strings.HasSuffix(valStr, "]") {
-		if !isJoin {
-			return nil, fmt.Errorf("join table not found for column")
-		}
-		if joinTable == nil {
-			return nil, fmt.Errorf("join table not found for column")
+		if isJoin {
+			// Join table array: resolve integer IDs to names
+			if joinTable == nil {
+				return nil, fmt.Errorf("join table not found for column")
+			}
+
+			inner := strings.TrimPrefix(strings.TrimSuffix(valStr, "]"), "[")
+			inner = strings.TrimSpace(inner)
+
+			if inner == "" {
+				return []string{}, nil // Empty array
+			}
+
+			// Split by comma and parse IDs
+			parts := strings.Split(inner, ",")
+			var result []string
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				if part == "" || part == "null" {
+					continue
+				}
+				// Accept quoted empty string as an empty string value
+				if part == "\"\"" {
+					result = append(result, "")
+					continue
+				}
+				// Reject nested arrays or objects
+				if strings.HasPrefix(part, "[") || strings.HasPrefix(part, "{") {
+					return nil, fmt.Errorf("invalid join ID: %s", part)
+				}
+				// Only allow integer IDs
+				if _, err := strconv.Atoi(part); err != nil {
+					return nil, fmt.Errorf("invalid join ID: %s", part)
+				}
+				id, _ := strconv.Atoi(part)
+				if name, exists := joinTable.IDToName[id]; exists {
+					result = append(result, name)
+				} else {
+					return nil, fmt.Errorf("unknown join ID: %d", id)
+				}
+			}
+			return result, nil
 		}
 
-		inner := strings.TrimPrefix(strings.TrimSuffix(valStr, "]"), "[")
-		inner = strings.TrimSpace(inner)
-
-		if inner == "" {
-			return []string{}, nil // Empty array
+		// Non-join array: parse as raw YAML to preserve element types
+		var rawArray []interface{}
+		if err := yaml.Unmarshal([]byte(valStr), &rawArray); err != nil {
+			return nil, fmt.Errorf("failed to parse array value: %w", err)
 		}
-
-		// Split by comma and parse IDs
-		parts := strings.Split(inner, ",")
-		var result []string
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part == "" || part == "null" {
-				continue
-			}
-			// Accept quoted empty string as an empty string value
-			if part == "\"\"" {
-				result = append(result, "")
-				continue
-			}
-			// Reject nested arrays or objects
-			if strings.HasPrefix(part, "[") || strings.HasPrefix(part, "{") {
-				return nil, fmt.Errorf("invalid join ID: %s", part)
-			}
-			// Only allow integer IDs
-			if _, err := strconv.Atoi(part); err != nil {
-				return nil, fmt.Errorf("invalid join ID: %s", part)
-			}
-			id, _ := strconv.Atoi(part)
-			if name, exists := joinTable.IDToName[id]; exists {
-				result = append(result, name)
-			} else {
-				return nil, fmt.Errorf("unknown join ID: %d", id)
-			}
-		}
-		return result, nil
+		return rawArray, nil
 	}
 
 	// Handle objects (payload)

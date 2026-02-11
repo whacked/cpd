@@ -1023,14 +1023,13 @@ data:
 			wantErr: false,
 		},
 		{
-			name: "array join ID with no join table is NOT allowed",
+			name: "array value with no join table is allowed (data column)",
 			input: `
 _columns: [time, authors, payload]
 data:
   - ["2024-01-01T00:00:00Z", [1, 2], {foo: "bar"}]
 `,
-			wantErr: true,
-			errMsg:  "join table not found for column",
+			wantErr: false,
 		},
 		{
 			name: "scalar join ID with metadata but no join table is allowed",
@@ -1063,14 +1062,13 @@ data:
 			wantErr: false, // valid as long as payload is not required to be a structured object
 		},
 		{
-			name: "empty array join ID is not allowed without join table",
+			name: "empty array value without join table is allowed",
 			input: `
 _columns: [time, authors, payload]
 data:
   - ["2024-01-01T00:00:00Z", [], {foo: "bar"}]
 `,
-			wantErr: true,
-			errMsg:  "join table not found for column",
+			wantErr: false,
 		},
 		{
 			name: "scalar join ID as string is allowed",
@@ -2574,6 +2572,70 @@ func TestDespace(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Contains(t, result, `[1, 2]`, "join table array IDs with default spacing")
 	})
+}
+
+func TestParseValue_NonJoinArray(t *testing.T) {
+	// Arrays in columns without join tables should be parsed as raw arrays
+	t.Run("string array without join table", func(t *testing.T) {
+		val, err := ParseValue(`["a", "b", "c"]`, nil, false)
+		assert.NoError(t, err)
+		arr, ok := val.([]interface{})
+		assert.True(t, ok, "expected []interface{}, got %T", val)
+		assert.Equal(t, 3, len(arr))
+		assert.Equal(t, "a", arr[0])
+		assert.Equal(t, "b", arr[1])
+		assert.Equal(t, "c", arr[2])
+	})
+
+	t.Run("integer array without join table", func(t *testing.T) {
+		val, err := ParseValue(`[1, 2, 3]`, nil, false)
+		assert.NoError(t, err)
+		arr, ok := val.([]interface{})
+		assert.True(t, ok, "expected []interface{}, got %T", val)
+		assert.Equal(t, 3, len(arr))
+		assert.Equal(t, 1, arr[0])
+		assert.Equal(t, 2, arr[1])
+	})
+
+	t.Run("mixed array without join table", func(t *testing.T) {
+		val, err := ParseValue(`["hello", 42, true, null]`, nil, false)
+		assert.NoError(t, err)
+		arr, ok := val.([]interface{})
+		assert.True(t, ok, "expected []interface{}, got %T", val)
+		assert.Equal(t, 4, len(arr))
+		assert.Equal(t, "hello", arr[0])
+		assert.Equal(t, 42, arr[1])
+		assert.Equal(t, true, arr[2])
+		assert.Nil(t, arr[3])
+	})
+
+	t.Run("empty array without join table", func(t *testing.T) {
+		val, err := ParseValue(`[]`, nil, false)
+		assert.NoError(t, err)
+		arr, ok := val.([]interface{})
+		assert.True(t, ok, "expected []interface{}, got %T", val)
+		assert.Equal(t, 0, len(arr))
+	})
+}
+
+func TestCPDToJSONL_ColumnWithoutJoinTable(t *testing.T) {
+	// A column declared in _columns but with no join table definition
+	// should expand correctly (scalars pass through, arrays pass through)
+	input := `_columns: [time, user_id, tags, payload]
+data:
+  - ["2024-01-01T00:00:00Z", "alice", ["admin", "user"], {note: "test"}]
+  - ["2024-01-02T00:00:00Z", "bob", ["user"], {note: "other"}]`
+
+	result, err := CPDToJSONLUnified(strings.NewReader(input))
+	assert.NoError(t, err)
+
+	// user_id (no join table, scalar) should appear as-is
+	assert.Contains(t, result, `"user_id":"alice"`)
+	assert.Contains(t, result, `"user_id":"bob"`)
+
+	// tags (no join table, array) should appear as raw arrays
+	assert.Contains(t, result, `"tags":["admin","user"]`)
+	assert.Contains(t, result, `"tags":["user"]`)
 }
 
 func TestValueToJoinKey(t *testing.T) {
