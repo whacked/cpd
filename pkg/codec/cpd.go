@@ -1961,7 +1961,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 			if len(joinTables[field]) == 0 {
 				id := 1
 				firstAppearance := make(map[string]int)
-				order := 0
+				order := 1
 
 				// Go through all records to find first appearance order
 				for _, record := range allRecords {
@@ -2007,7 +2007,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 
 			// Create a map to track first appearance order
 			firstAppearance := make(map[string]int)
-			order := 0
+			order := 1
 
 			// Go through all records to find first appearance order
 			for _, record := range allRecords {

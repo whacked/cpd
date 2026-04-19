@@ -2709,3 +2709,69 @@ func TestValueToJoinKey(t *testing.T) {
 		})
 	}
 }
+
+func TestJSONLToCPD_JoinTableFirstAppearanceOrder(t *testing.T) {
+	// The first-seen value must get ID 1. Bug: firstAppearance[key]==0 can't
+	// distinguish "not yet seen" (map default=0) from "seen at order=0",
+	// so the first value's order gets overwritten on its second occurrence,
+	// pushing it after values that appeared later.
+	tests := []struct {
+		name          string
+		input         string
+		wantTableLine string // exact line expected in join table block
+	}{
+		{
+			name: "first-seen value gets ID 1 (auto-detect)",
+			input: `{"name":"a","status":"ok"}
+{"name":"b","status":"fail"}
+{"name":"c","status":"ok"}`,
+			// "ok" appears first so must get ID 1
+			wantTableLine: "  ok: 1",
+		},
+		{
+			name: "first-seen value gets ID 1 (forced join table)",
+			input: `{"name":"a","status":"ok"}
+{"name":"b","status":"fail"}
+{"name":"c","status":"ok"}`,
+			// same expectation via -join-tables path
+			wantTableLine: "  ok: 1",
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			var err error
+			if i == 1 {
+				// forced join table path
+				JoinTableOrder = []string{"status"}
+				defer func() { JoinTableOrder = nil }()
+				result, err = JSONLToCPDWithJoinTables(
+					strings.NewReader(tt.input),
+					map[string]map[string]int{"status": {}},
+				)
+			} else {
+				result, err = JSONLToCPD(strings.NewReader(tt.input))
+			}
+			assert.NoError(t, err)
+			assert.Contains(t, result, tt.wantTableLine,
+				"join table must assign ID 1 to the first-seen value\nfull output:\n%s", result)
+		})
+	}
+
+	t.Run("numeric zero value gets correct first-appearance ID (forced)", func(t *testing.T) {
+		input := `{"name":"a","count":0}
+{"name":"b","count":1}
+{"name":"c","count":0}`
+		JoinTableOrder = []string{"count"}
+		defer func() { JoinTableOrder = nil }()
+		result, err := JSONLToCPDWithJoinTables(
+			strings.NewReader(input),
+			map[string]map[string]int{"count": {}},
+		)
+		assert.NoError(t, err)
+		// "0" appears first so must get ID 1
+		assert.Contains(t, result, "  0: 1",
+			"numeric zero appearing first must get ID 1\nfull output:\n%s", result)
+	})
+}
