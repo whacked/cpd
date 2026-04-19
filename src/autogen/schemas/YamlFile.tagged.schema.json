@@ -1,5 +1,58 @@
 {
   "description": "json schema referenced by data in CacheableDataResult",
+  "examples": [
+    {
+      "_schemas": {
+        "data": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "temperature": {
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "data": [
+        {
+          "name": "alpha-1",
+          "temperature": 22.5
+        },
+        {
+          "name": "alpha-2",
+          "temperature": 23
+        }
+      ]
+    },
+    {
+      "_columns": [
+        "status",
+        "time",
+        "comment"
+      ],
+      "data": [
+        [
+          1,
+          1,
+          "system initialized"
+        ],
+        [
+          2,
+          2,
+          "manual shutdown"
+        ]
+      ],
+      "status": {
+        "off": 2,
+        "on": 1
+      }
+    }
+  ],
   "parents": [],
   "patternProperties": {
     "^[a-zA-Z][a-zA-Z0-9]+$": {

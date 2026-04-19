@@ -1,0 +1,33 @@
+_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        status:
+          type: [string, "null"]
+        time:
+          type: number
+        comment:
+          type: string
+      required: [time]
+_columns:
+- status
+- time
+- comment
+status:
+  on: 1
+  off: 2
+  standby: 3
+  error: 4
+data:
+  - [1, 1, "system initialized"]
+  - [2, 2, "manual shutdown"]
+  - [1, 3, "auto-restart triggered"]
+  - [3, 4, "awaiting input"]
+  - [2, 5, "manual shutdown"]
+  - [4, 6, "fault code 17"]
+  - [1, 7, "system idle"]
+  - [2, 8, "scheduled cycle"]
+  - [3, 9, "queued"]
+  - [null, 10, "unlogged state"]

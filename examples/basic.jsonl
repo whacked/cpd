@@ -1,0 +1,10 @@
+{"name":"alpha-1","temperature":22.5,"status":"ok"}
+{"name":"alpha-2","temperature":23.0,"status":"ok"}
+{"name":"beta-1","status":"fail","temperature":19.8}
+{"temperature":20.0,"name":"beta-2","status":"warn"}
+{"status":"ok","temperature":21.0,"name":"gamma-1"}
+{"name":"gamma-2","temperature":null,"status":"fail"}
+{"name":"delta-1","temperature":18.4,"status":"warn"}
+{"name":"epsilon-1","temperature":17.0,"status":"unknown"}
+{"name":"zeta-1","temperature":22.0,"status":null}
+{"name":"eta-1","temperature":25.0}

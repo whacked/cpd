@@ -9,11 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/GitRowin/orderedmapjson"
 	"github.com/whacked/yamdb/pkg/codec"
 	"github.com/whacked/yamdb/pkg/io/stream"
-	"github.com/whacked/yamdb/pkg/io/yamlutil"
-	"gopkg.in/yaml.v3"
 )
 
 // Global variables
@@ -21,6 +18,8 @@ var (
 	verbosityLevel int
 	showHelp       bool
 	showVersion    bool
+	showExamples   bool
+	showGenDocs    bool
 	sqlMode        bool
 	joinTables     string
 	timeColumns    string
@@ -166,6 +165,8 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  -h, --help           Show help information")
+	fmt.Println("  --examples           Show example I/O with live conversion output")
+	fmt.Println("  --gen-docs           Output Markdown documentation for README autogeneration")
 	fmt.Println("  -V, --version        Show version information")
 	fmt.Println("  -v, --verbose        Verbose output")
 	fmt.Println("  -vvv                 Extra verbose output")
@@ -198,6 +199,12 @@ func parseFlags() {
 		switch {
 		case arg == "-h" || arg == "--help":
 			showHelp = true
+			i++
+		case arg == "--examples":
+			showExamples = true
+			i++
+		case arg == "--gen-docs":
+			showGenDocs = true
 			i++
 		case arg == "-V" || arg == "--version":
 			showVersion = true
@@ -288,6 +295,16 @@ func main() {
 
 	if showVersion {
 		fmt.Println(version)
+		return
+	}
+
+	if showExamples {
+		printExamples()
+		return
+	}
+
+	if showGenDocs {
+		printGenDocs()
 		return
 	}
 
@@ -488,35 +505,11 @@ func main() {
 
 		// If we need to expand and carry forward special fields
 		if expandCarryForward {
-			processor := codec.NewJSONLProcessor()
-			scanner := bufio.NewScanner(strings.NewReader(string(fileData)))
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" || strings.HasPrefix(line, "//") {
-					continue
-				}
-
-				// Parse the line as YAML to preserve order
-				var node yaml.Node
-				if err := yaml.Unmarshal([]byte(line), &node); err != nil {
-					fmt.Printf("Error parsing JSONL line: %v\n", err)
-					os.Exit(1)
-				}
-
-				record := orderedmapjson.NewAnyOrderedMap()
-				if err := yamlutil.ConvertNodeToOrderedMap(&node, record); err != nil {
-					fmt.Printf("Error converting to ordered map: %v\n", err)
-					os.Exit(1)
-				}
-
-				if _, err := processor.ProcessRecord(record); err != nil {
-					fmt.Printf("Error processing record: %v\n", err)
-					os.Exit(1)
-				}
+			result, err = expandSparseJSONLToString(fileData)
+			if err != nil {
+				fmt.Printf("Error expanding JSONL: %v\n", err)
+				os.Exit(1)
 			}
-
-			// Convert to expanded JSONL with carry-forward
-			result = processor.ToExpandedJSONL(true)
 		}
 
 		if err != nil {

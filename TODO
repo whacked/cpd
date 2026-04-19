@@ -1,0 +1,7 @@
+# examples coverage gaps
+
+- commonpayloaddata: time+tags+payload triplet (the format the binary is named after) — use commonpayloaddata.jsonl → cpd.yaml
+- mixed_mode.yaml → JSONL: mixed positional arrays + named objects in same data block
+- -sql output mode: not demonstrated at all
+- -data-columns flag: not demonstrated
+- trim existing examples to fewer records for tighter output

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "examples": [
+    {
+      "name": "jsonl-to-cpd",
+      "description": "Convert flat JSONL with enum-like fields to CPD YAML. The 'status' column is auto-promoted to a join table.",
+      "input": "basic.jsonl",
+      "output_format": "yaml"
+    },
+    {
+      "name": "jsonl-to-cpd-force-join",
+      "description": "Same input, but explicitly force 'status' as a join table with -join-tables.",
+      "input": "basic.jsonl",
+      "output_format": "yaml",
+      "flags": ["-join-tables", "status"]
+    },
+    {
+      "name": "cpd-to-jsonl",
+      "description": "Expand a compacted CPD YAML (positional arrays + join tables) back to full JSONL.",
+      "input": "compacted.cpd.yaml",
+      "output_format": "jsonl"
+    },
+    {
+      "name": "sparse-jsonl-expand",
+      "description": "Expand sparse JSONL where _meta/_version carry-forward context across records.",
+      "input": "meta_version.jsonl",
+      "output_format": "jsonl"
+    }
+  ]
+}

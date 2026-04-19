@@ -50,6 +50,34 @@ local Base = {
       type: ['array', 'null'],
     },
   },
+  examples: [
+    {
+      _schemas: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              temperature: { type: 'number' },
+            },
+          },
+        },
+      },
+      data: [
+        { name: 'alpha-1', temperature: 22.5 },
+        { name: 'alpha-2', temperature: 23.0 },
+      ],
+    },
+    {
+      _columns: ['status', 'time', 'comment'],
+      status: { on: 1, off: 2 },
+      data: [
+        [1, 1, 'system initialized'],
+        [2, 2, 'manual shutdown'],
+      ],
+    },
+  ],
 };
 
 Base
