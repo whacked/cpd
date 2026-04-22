@@ -118,6 +118,8 @@ func runExample(e ExampleEntry, inputContent []byte) (string, error) {
 }
 
 func printExamples() {
+	printCUESchemaExamples()
+
 	idx, err := loadExamplesIndex()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading examples: %v\n", err)

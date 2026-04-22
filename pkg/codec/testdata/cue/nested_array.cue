@@ -1,0 +1,4 @@
+{
+	id:   int
+	tags: [...string]
+}

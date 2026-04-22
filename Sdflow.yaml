@@ -2,9 +2,19 @@ build:
   in:
     - main.go
     - embed.go
+    - cue_demo_stub.go
     - version.go
   out: ./cpd
   run: go build -o $out $in
+
+build-with-cue:
+  in:
+    - main.go
+    - embed.go
+    - cue_demo.go
+    - version.go
+  out: ./cpd
+  run: go build -tags cue -o $out $in
 
 version.go:
   in:

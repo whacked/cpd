@@ -119,7 +119,7 @@ type CPDDocument struct {
 	Data                 []*CPDRow
 	Meta                 *orderedmapjson.AnyOrderedMap
 	Version              string
-	Schemas              map[string]*orderedmapjson.AnyOrderedMap // table name -> schema
+	Schemas              map[string]interface{} // table name -> JSON Schema (AnyOrderedMap or map[string]interface{})
 	ArrayPromotedColumns map[string]bool                           // join table columns that should be arrays in output
 }
 
@@ -166,7 +166,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 			return nil, fmt.Errorf("_schemas must be a mapping")
 		}
 		// Initialize schemas map only when schemas are found
-		doc.Schemas = make(map[string]*orderedmapjson.AnyOrderedMap)
+		doc.Schemas = make(map[string]interface{})
 		for i := 0; i < len(schemasNode.Content); i += 2 {
 			if i+1 >= len(schemasNode.Content) {
 				break
@@ -174,11 +174,33 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 			tableName := schemasNode.Content[i].Value
 			schemaNode := schemasNode.Content[i+1]
 
-			schemaMap := orderedmapjson.NewAnyOrderedMap()
-			if err := yamlutil.ConvertNodeToOrderedMap(schemaNode, schemaMap); err != nil {
-				return nil, fmt.Errorf("failed to convert schema for table %s: %w", tableName, err)
+			isArraySchema := strings.HasSuffix(tableName, "...")
+			if isArraySchema {
+				tableName = strings.TrimSuffix(tableName, "...")
 			}
-			doc.Schemas[tableName] = schemaMap
+
+			var schemaVal interface{}
+			switch schemaNode.Kind {
+			case yaml.ScalarNode:
+				itemSchema, err := cueStringToJSONSchema(schemaNode.Value)
+				if err != nil {
+					return nil, fmt.Errorf("schema %q: %w", tableName, err)
+				}
+				schemaVal = itemSchema
+			case yaml.MappingNode:
+				schemaMap := orderedmapjson.NewAnyOrderedMap()
+				if err := yamlutil.ConvertNodeToOrderedMap(schemaNode, schemaMap); err != nil {
+					return nil, fmt.Errorf("failed to convert schema for table %s: %w", tableName, err)
+				}
+				schemaVal = schemaMap
+			default:
+				return nil, fmt.Errorf("schema %q: unsupported node kind %v", tableName, schemaNode.Kind)
+			}
+
+			if isArraySchema {
+				schemaVal = map[string]interface{}{"type": "array", "items": schemaVal}
+			}
+			doc.Schemas[tableName] = schemaVal
 		}
 	}
 
@@ -920,7 +942,7 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		Data:       []*CPDRow{},
 		Meta:       orderedmapjson.NewAnyOrderedMap(),
 		Version:    "",
-		Schemas:    make(map[string]*orderedmapjson.AnyOrderedMap),
+		Schemas:    make(map[string]interface{}),
 	}
 	// Version
 	if versionNode := findNodeByKey(&node, "_version"); versionNode != nil {
@@ -976,11 +998,33 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 			tableName := schemasNode.Content[i].Value
 			schemaNode := schemasNode.Content[i+1]
 			
-			schemaMap := orderedmapjson.NewAnyOrderedMap()
-			if err := yamlutil.ConvertNodeToOrderedMap(schemaNode, schemaMap); err != nil {
-				return nil, fmt.Errorf("failed to convert schema for table %s: %w", tableName, err)
+			isArraySchema := strings.HasSuffix(tableName, "...")
+			if isArraySchema {
+				tableName = strings.TrimSuffix(tableName, "...")
 			}
-			doc.Schemas[tableName] = schemaMap
+
+			var schemaVal interface{}
+			switch schemaNode.Kind {
+			case yaml.ScalarNode:
+				itemSchema, err := cueStringToJSONSchema(schemaNode.Value)
+				if err != nil {
+					return nil, fmt.Errorf("schema %q: %w", tableName, err)
+				}
+				schemaVal = itemSchema
+			case yaml.MappingNode:
+				schemaMap := orderedmapjson.NewAnyOrderedMap()
+				if err := yamlutil.ConvertNodeToOrderedMap(schemaNode, schemaMap); err != nil {
+					return nil, fmt.Errorf("failed to convert schema for table %s: %w", tableName, err)
+				}
+				schemaVal = schemaMap
+			default:
+				return nil, fmt.Errorf("schema %q: unsupported node kind", tableName)
+			}
+
+			if isArraySchema {
+				schemaVal = map[string]interface{}{"type": "array", "items": schemaVal}
+			}
+			doc.Schemas[tableName] = schemaVal
 		}
 	}
 	// Join tables
@@ -2377,7 +2421,7 @@ func ParseMultiDocumentCPD(r io.Reader) (*CPDDocument, error) {
 		Data:       []*CPDRow{},
 		Meta:       currentMeta,
 		Version:    currentVersion,
-		Schemas:    make(map[string]*orderedmapjson.AnyOrderedMap),
+		Schemas:    make(map[string]interface{}),
 	}
 
 	// Combine all data from all documents
