@@ -17,19 +17,30 @@ build-with-cue:
   run: go build -tags cue -o $out $in
 
 version.go:
-  in:
-    - Sdflow.yaml
-    - version.go
+  in: Sdflow.yaml
   out: version.go
   run: |
     today=$(date +%Y%m%d)
     git_commits_today=$(git log --pretty=format:"%cd %h" --date=format:"%Y%m%d" | tac | grep "^$today")
     number_commits_today=$(echo "$git_commits_today" | wc -l)
-    latest_sha=$(git log --oneline | head -1 | awk '{print $1}')
+    latest_sha=$(echo "$git_commits_today" | tail -1 | awk '{print $NF}')
 
     echo 'package main
 
     const version = "'$today.$number_commits_today.$latest_sha'"' > $out
+
+./default.nix:
+  in:
+    - version.go
+    - default.nix
+  run: |
+    version_string=$(cat ${in[0]} | tail -1 | awk '{print $NF}' | tr -d '"')
+    current_default_nix=$(cat ${in[1]})
+    echo -e "$current_default_nix" | sed -E 's|version\s+=.+;|version = "'$version_string'";|' | tee ${in[1]}
+
+version:
+  in: version.go
+  run: cat $in | tail -1 | awk '{print $NF}' | tr -d '"'
 
 
 # schemas stuff

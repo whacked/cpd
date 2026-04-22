@@ -14,11 +14,12 @@
 
 buildGoApplication {
   pname = "cpd";
-  version = "20260129.1.c028575";
+  version = "20260423.3.cd21841";
   pwd = ./.;
   src = ./.;
   modules = ./gomod2nix.toml;
   CGO_ENABLED = 0;
+  tags = [ "cue" ];
   flags = [
     "-mod=readonly"
   ];
