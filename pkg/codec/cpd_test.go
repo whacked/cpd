@@ -2775,3 +2775,42 @@ func TestJSONLToCPD_JoinTableFirstAppearanceOrder(t *testing.T) {
 			"numeric zero appearing first must get ID 1\nfull output:\n%s", result)
 	})
 }
+
+func TestCustomDataKey(t *testing.T) {
+	DataKey = "records"
+	defer func() { DataKey = "" }()
+
+	input := `{"name":"alice","status":"ok"}
+{"name":"bob","status":"fail"}`
+	result, err := JSONLToCPD(strings.NewReader(input))
+	assert.NoError(t, err)
+	assert.Contains(t, result, "records:", "custom DataKey must appear as section key")
+	assert.NotContains(t, result, "\ndata:", "default 'data' key must not appear")
+
+	// Round-trip: parse the CPD back to JSONL
+	jsonl, err := CPDToJSONLUnified(strings.NewReader(result))
+	assert.NoError(t, err)
+	assert.Contains(t, jsonl, `"name":"alice"`)
+}
+
+func TestCustomPayloadColumn(t *testing.T) {
+	PayloadColumn = "_extra"
+	defer func() { PayloadColumn = "" }()
+
+	input := `{"name":"alice","known":1,"extra1":"x","extra2":"y"}`
+	JoinTableOrder = []string{"known"}
+	defer func() { JoinTableOrder = nil }()
+
+	result, err := JSONLToCPDWithJoinTables(
+		strings.NewReader(input),
+		map[string]map[string]int{"known": {}},
+	)
+	assert.NoError(t, err)
+	assert.Contains(t, result, "_extra", "custom PayloadColumn must appear in _columns")
+	assert.NotContains(t, result, "- payload", "default 'payload' column must not appear")
+
+	// Round-trip
+	jsonl, err := CPDToJSONLUnified(strings.NewReader(result))
+	assert.NoError(t, err)
+	assert.Contains(t, jsonl, `"name":"alice"`)
+}

@@ -39,6 +39,18 @@ var DefaultTimeColumns = []string{"time", "timestamp"}
 // If nil, DefaultTimeColumns is used. Set this from CLI flags to override.
 var TimeColumns []string
 
+// DefaultDataKey is the default YAML section key for the main data array.
+var DefaultDataKey = "data"
+
+// DataKey overrides the main data section key. If empty, DefaultDataKey is used.
+var DataKey string
+
+// DefaultPayloadColumn is the default catch-all column name that absorbs unmatched object fields.
+var DefaultPayloadColumn = "payload"
+
+// PayloadColumn overrides the catch-all column name. If empty, DefaultPayloadColumn is used.
+var PayloadColumn string
+
 // DataColumns is a list of fields to extract as columns without join table semantics.
 // Set from CLI -data-columns flag.
 var DataColumns []string
@@ -82,6 +94,20 @@ func isTimeColumn(colName string, timeColumns []string) bool {
 		}
 	}
 	return false
+}
+
+func getDataKey() string {
+	if DataKey != "" {
+		return DataKey
+	}
+	return DefaultDataKey
+}
+
+func getPayloadColumn() string {
+	if PayloadColumn != "" {
+		return PayloadColumn
+	}
+	return DefaultPayloadColumn
 }
 
 // detectTimeColumn finds the first matching time column in records.
@@ -213,7 +239,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 		value := root.Content[i+1]
 
 		// Skip special fields
-		if strings.HasPrefix(key, "_") || key == "data" {
+		if strings.HasPrefix(key, "_") || key == getDataKey() {
 			continue
 		}
 
@@ -284,7 +310,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 	}
 
 	// Parse data
-	if dataNode := findNodeByKey(root, "data"); dataNode != nil {
+	if dataNode := findNodeByKey(root, getDataKey()); dataNode != nil {
 		if dataNode.Kind != yaml.SequenceNode {
 			return nil, fmt.Errorf("data must be a sequence")
 		}
@@ -357,7 +383,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 					default:
 						return nil, fmt.Errorf("invalid join ID in row %d column %s: invalid type", j, colName)
 					}
-				} else if colName == "payload" {
+				} else if colName == getPayloadColumn() {
 					// Handle payload specially
 					switch val.Kind {
 					case yaml.MappingNode:
@@ -423,7 +449,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 					var val interface{}
 					var exists bool
 
-					if colName == "payload" {
+					if colName == getPayloadColumn() {
 						// Special handling for payload column - collect unmatched fields
 						payloadMap := orderedmapjson.NewAnyOrderedMap()
 
@@ -435,7 +461,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 							// Check if this field matches any column
 							matchesColumn := false
 							for _, checkCol := range doc.Columns {
-								if checkCol == fieldName && checkCol != "payload" {
+								if checkCol == fieldName && checkCol != getPayloadColumn() {
 									matchesColumn = true
 									break
 								}
@@ -507,7 +533,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 				// Second, add any extra fields that don't match columns (unless there's a payload column)
 				hasPayloadColumn := false
 				for _, colName := range doc.Columns {
-					if colName == "payload" {
+					if colName == getPayloadColumn() {
 						hasPayloadColumn = true
 						break
 					}
@@ -910,7 +936,7 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		hasContent = true
 
 		if !inDataSection {
-			if trimmedLine == "data:" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			if trimmedLine == getDataKey()+":" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
 				// Only treat as data section if "data:" is at root level (no indentation)
 				inDataSection = true
 				continue
@@ -1223,7 +1249,7 @@ func parseDataRow(line string, columns []string, joinTables map[string]*JoinTabl
 			}
 		}
 		
-		if colName == "payload" && val != nil {
+		if colName == getPayloadColumn() && val != nil {
 			// Flatten payload fields
 			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
 				for el := om.Front(); el != nil; el = el.Next() {
@@ -1269,7 +1295,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 		var val interface{}
 		var exists bool
 
-		if colName == "payload" {
+		if colName == getPayloadColumn() {
 			// Special handling for payload column - collect unmatched fields
 			payloadMap := orderedmapjson.NewAnyOrderedMap()
 
@@ -1281,7 +1307,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 				// Check if this field matches any column
 				matchesColumn := false
 				for _, checkCol := range columns {
-					if checkCol == fieldName && checkCol != "payload" {
+					if checkCol == fieldName && checkCol != getPayloadColumn() {
 						matchesColumn = true
 						break
 					}
@@ -1364,7 +1390,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 		}
 
 		// Store the processed value
-		if colName == "payload" && val != nil {
+		if colName == getPayloadColumn() && val != nil {
 			// Flatten payload fields into the row
 			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
 				for el := om.Front(); el != nil; el = el.Next() {
@@ -1393,7 +1419,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 	// Second, add any extra fields that don't match columns (unless there's a payload column)
 	hasPayloadColumn := false
 	for _, colName := range columns {
-		if colName == "payload" {
+		if colName == getPayloadColumn() {
 			hasPayloadColumn = true
 			break
 		}
@@ -1989,7 +2015,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 
 	// Add single payload column if there are non-join, non-data-column fields
 	if len(allFields) > 0 {
-		columns = append(columns, "payload")
+		columns = append(columns, getPayloadColumn())
 	}
 
 	// Create or use join tables for the selected fields
@@ -2145,7 +2171,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		// Handle join fields, data columns, payload, or regular fields
 		for i := colIndex; i < len(columns); i++ {
 			col := columns[i]
-			if col == "payload" {
+			if col == getPayloadColumn() {
 				// Collect all non-join, non-time, non-data-column fields into payload object
 				payloadMap := orderedmapjson.NewAnyOrderedMap()
 				for el := record.Front(); el != nil; el = el.Next() {
@@ -2257,7 +2283,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 	}
 
 	// Add data section
-	buf.WriteString("data:\n")
+	buf.WriteString(getDataKey() + ":\n")
 	for _, row := range data {
 		rowArray := row.([]interface{})
 		buf.WriteString("  - [")
@@ -2449,7 +2475,7 @@ func CPDToSQLite(r io.Reader) (string, error) {
 	
 	// Process columns and join tables
 	for _, col := range doc.Columns {
-		if col == "payload" {
+		if col == getPayloadColumn() {
 			// Skip payload - it will be stored as JSON
 			continue
 		}
@@ -2476,7 +2502,7 @@ func CPDToSQLite(r io.Reader) (string, error) {
 	}
 
 	// Generate DDL
-	ddl := relational.GenerateSQLiteDDL(fieldInfo, "data")
+	ddl := relational.GenerateSQLiteDDL(fieldInfo, getDataKey())
 	
 	// Convert CPD data to format expected by GenerateSQLiteInserts
 	var records []*orderedmapjson.AnyOrderedMap
@@ -2499,8 +2525,8 @@ func (d *CPDDocument) validateDataAgainstSchema() error {
 		return nil // No schemas to validate against
 	}
 
-	// Look for a "data" schema
-	dataSchema, hasDataSchema := d.Schemas["data"]
+	// Look for a data schema
+	dataSchema, hasDataSchema := d.Schemas[getDataKey()]
 	if !hasDataSchema {
 		return nil // No data schema to validate against
 	}

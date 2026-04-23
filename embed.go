@@ -117,7 +117,34 @@ func runExample(e ExampleEntry, inputContent []byte) (string, error) {
 	}
 }
 
+func printReservedNames() {
+	fmt.Println("## Reserved Names")
+	fmt.Println()
+	fmt.Println("CPD uses two categories of reserved names:")
+	fmt.Println()
+	fmt.Println("**Syntax-level** (always reserved, not configurable):")
+	fmt.Println()
+	fmt.Println("| Key | Purpose |")
+	fmt.Println("|-----|---------|")
+	fmt.Println("| `_columns` | Ordered list of columns in the data table |")
+	fmt.Println("| `_schemas` | JSON/CUE schemas for validation |")
+	fmt.Println("| `_keys` | Key column declarations |")
+	fmt.Println("| `_codecs` | Per-column codec hints |")
+	fmt.Println("| `_version` | Document version for carry-forward merging |")
+	fmt.Println("| `_meta` | Document metadata carried forward to each row |")
+	fmt.Println()
+	fmt.Println("**Application-level** (defaults, configurable via CLI flags):")
+	fmt.Println()
+	fmt.Println("| Name | Default | Flag | Purpose |")
+	fmt.Println("|------|---------|------|---------|")
+	fmt.Printf("| data section key | `%s` | `-data-key` | Top-level YAML key for the main data array |\n", codec.DefaultDataKey)
+	fmt.Printf("| payload column | `%s` | `-payload-column` | Catch-all column that absorbs unmatched object fields |\n", codec.DefaultPayloadColumn)
+	fmt.Printf("| time columns | `%s` | `-time-columns` | Column names that receive time-specific handling |\n", strings.Join(codec.DefaultTimeColumns, ", "))
+	fmt.Println()
+}
+
 func printExamples() {
+	printReservedNames()
 	printCUESchemaExamples()
 
 	idx, err := loadExamplesIndex()
@@ -159,6 +186,8 @@ func printExamples() {
 }
 
 func printGenDocs() {
+	printReservedNames()
+
 	idx, err := loadExamplesIndex()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading examples: %v\n", err)
