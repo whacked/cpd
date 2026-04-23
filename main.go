@@ -24,6 +24,8 @@ var (
 	joinTables     string
 	timeColumns    string
 	dataColumns    string
+	dataKey        string
+	payloadColumn  string
 	despace        bool
 	toJSONL        bool
 	toParquet      bool
@@ -177,6 +179,8 @@ func printUsage() {
 	fmt.Println("  -join-tables LIST    Comma-separated list of fields to force as join tables")
 	fmt.Println("  -time-columns LIST   Comma-separated time column candidates (default: time,timestamp)")
 	fmt.Println("  -data-columns LIST   Comma-separated fields to extract as columns (no join table)")
+	fmt.Println("  -data-key NAME       Override main data section key (default: data)")
+	fmt.Println("  -payload-column NAME Override catch-all payload column name (default: payload)")
 	fmt.Println("  -despace             Remove spaces after commas in data rows for compact output")
 	fmt.Println()
 	fmt.Println("Stdin examples:")
@@ -254,6 +258,22 @@ func parseFlags() {
 				i += 2
 			} else {
 				fmt.Println("Error: -data-columns requires a value")
+				os.Exit(1)
+			}
+		case arg == "-data-key":
+			if i+1 < len(args) {
+				dataKey = args[i+1]
+				i += 2
+			} else {
+				fmt.Println("Error: -data-key requires a value")
+				os.Exit(1)
+			}
+		case arg == "-payload-column":
+			if i+1 < len(args) {
+				payloadColumn = args[i+1]
+				i += 2
+			} else {
+				fmt.Println("Error: -payload-column requires a value")
 				os.Exit(1)
 			}
 		case arg == "-despace":
@@ -384,6 +404,14 @@ func main() {
 			}
 		}
 		codec.DataColumns = dataColumnList
+	}
+
+	// Set custom data key and payload column if specified
+	if dataKey != "" {
+		codec.DataKey = dataKey
+	}
+	if payloadColumn != "" {
+		codec.PayloadColumn = payloadColumn
 	}
 
 	// Check for collisions between -join-tables and -data-columns
