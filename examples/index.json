@@ -25,6 +25,12 @@
       "description": "Expand sparse JSONL where _meta/_version carry-forward context across records.",
       "input": "meta_version.jsonl",
       "output_format": "jsonl"
+    },
+    {
+      "name": "payload-absorption",
+      "description": "Fields that don't match any join table are collected into the 'payload' catch-all column. Override the column name with -payload-column.",
+      "input": "payload-demo.jsonl",
+      "output_format": "yaml"
     }
   ]
 }
