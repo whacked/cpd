@@ -2618,6 +2618,11 @@ func formatYAMLKey(key string) string {
 		return fmt.Sprintf("%q", key)
 	}
 
+	// Splat columns ("..." or "...name") are safe unquoted inside flow sequences.
+	if strings.HasPrefix(key, "...") {
+		return key
+	}
+
 	// Check for special characters that require quoting
 	for _, r := range key {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
