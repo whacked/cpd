@@ -1,0 +1,5 @@
+_columns: [...]
+data:
+  - [{name: "alice", score: 95, note: "top performer", reviewed_by: "mgr1"}]
+  - [{name: "bob", score: 82}]
+  - [{name: "carol", score: 78, note: "needs follow-up"}]

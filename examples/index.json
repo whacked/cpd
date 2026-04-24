@@ -5,12 +5,14 @@
       "name": "jsonl-to-cpd",
       "description": "Convert flat JSONL with enum-like fields to CPD YAML. The 'status' column is auto-promoted to a join table.",
       "input": "basic.jsonl",
+      "expected": "expected/basic.cpd.yaml",
       "output_format": "yaml"
     },
     {
       "name": "jsonl-to-cpd-force-join",
       "description": "Same input, but explicitly force 'status' as a join table with -join-tables.",
       "input": "basic.jsonl",
+      "expected": "expected/basic-force-join.cpd.yaml",
       "output_format": "yaml",
       "flags": ["-join-tables", "status"]
     },
@@ -18,19 +20,36 @@
       "name": "cpd-to-jsonl",
       "description": "Expand a compacted CPD YAML (positional arrays + join tables) back to full JSONL.",
       "input": "compacted.cpd.yaml",
+      "expected": "expected/compacted.jsonl",
       "output_format": "jsonl"
     },
     {
       "name": "sparse-jsonl-expand",
       "description": "Expand sparse JSONL where _meta/_version carry-forward context across records.",
       "input": "meta_version.jsonl",
+      "expected": "expected/meta_version.expanded.jsonl",
       "output_format": "jsonl"
     },
     {
       "name": "payload-absorption",
-      "description": "Fields that don't match any join table are collected into the 'payload' catch-all column. Override the column name with -payload-column.",
+      "description": "Fields that don't match any join table are collected into the splat catch-all column.",
       "input": "payload-demo.jsonl",
+      "expected": "expected/payload-demo.cpd.yaml",
       "output_format": "yaml"
+    },
+    {
+      "name": "structured-plain-columns",
+      "description": "Plain positional columns preserve structured object and array values; only splat columns flatten object fields.",
+      "input": "structured-plain-columns.cpd.yaml",
+      "expected": "expected/structured-plain-columns.jsonl",
+      "output_format": "jsonl"
+    },
+    {
+      "name": "legacy-payload-flattening",
+      "description": "The legacy payload column name remains a splat alias and flattens object fields.",
+      "input": "legacy-payload.cpd.yaml",
+      "expected": "expected/legacy-payload.jsonl",
+      "output_format": "jsonl"
     }
   ]
 }

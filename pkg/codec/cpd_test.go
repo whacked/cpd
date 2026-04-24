@@ -1830,12 +1830,12 @@ data:
 		t.Run(tt.name, func(t *testing.T) {
 			sql, err := CPDToSQLite(strings.NewReader(tt.input))
 			assert.NoError(t, err)
-			
+
 			// Check that all expected SQL statements are present
 			for _, expected := range tt.want {
 				assert.Contains(t, sql, expected)
 			}
-			
+
 			// Basic validation - should contain CREATE and INSERT statements
 			assert.Contains(t, sql, "CREATE TABLE")
 			assert.Contains(t, sql, "INSERT INTO")
@@ -2003,8 +2003,8 @@ data:
 
 func TestCPD_SchemaParsing(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
+		name        string
+		input       string
 		wantSchemas map[string]bool // table name -> exists
 	}{
 		{
@@ -2075,7 +2075,7 @@ data:
 					}
 				}
 			}
-			
+
 			// If no schemas expected, ensure doc.Schemas is either nil or empty
 			if len(tt.wantSchemas) == 0 {
 				if doc.Schemas != nil {
@@ -2678,10 +2678,10 @@ data:
 
 func TestValueToJoinKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    interface{}
-		wantKey  string
-		wantNil  bool
+		name    string
+		input   interface{}
+		wantKey string
+		wantNil bool
 	}{
 		{
 			name:    "string value",
@@ -2901,4 +2901,63 @@ func TestSplatColumnSyntax(t *testing.T) {
 		assert.Contains(t, jsonl, `"name":"alice"`)
 		assert.Contains(t, jsonl, `"note":"top"`)
 	})
+}
+
+func TestCPDToJSONL_PlainColumnsPreserveStructuredValues(t *testing.T) {
+	resetGlobals(t)
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name: "plain columns preserve object values",
+			input: `_columns: [name, score, blah]
+data:
+  - [{what: hello}, 95, {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":{"what":"hello"},"score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "plain columns preserve scalar and object values",
+			input: `_columns: [name, score, blah]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":"alice","score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "plain columns preserve array and object values",
+			input: `_columns: [name, score, blah]
+data:
+  - [alice, [1,2,3], {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":"alice","score":[1,2,3],"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "plain columns preserve nested structured values",
+			input: `_columns: [name, score, blah]
+data:
+  - [{what: thing}, [1, {two: 2}, [3]], {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":{"what":"thing"},"score":[1,{"two":2},[3]],"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "legacy payload name still flattens",
+			input: `_columns: [name, score, payload]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":"alice","score":95,"note":"top","reviewed_by":"mgr1"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := CPDToJSONLUnified(strings.NewReader(tt.input))
+			assert.NoError(t, err)
+			assert.JSONEq(t, tt.want, strings.TrimSpace(out))
+		})
+	}
 }

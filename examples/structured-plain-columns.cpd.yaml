@@ -1,0 +1,6 @@
+_columns: [name, score, blah]
+data:
+  - [{what: hello}, 95, {note: top, reviewed_by: mgr1}]
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+  - [alice, [1, 2, 3], {note: top, reviewed_by: mgr1}]
+  - [{what: thing}, [1, {two: 2}, [3]], {note: top, reviewed_by: mgr1}]
