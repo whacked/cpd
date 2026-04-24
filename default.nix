@@ -14,7 +14,7 @@
 
 buildGoApplication {
   pname = "cpd";
-  version = "20260423.3.cf38f6b";
+  version = "20260424.2.8f3768c";
   pwd = ./.;
   src = ./.;
   modules = ./gomod2nix.toml;
