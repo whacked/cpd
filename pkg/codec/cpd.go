@@ -152,8 +152,8 @@ type CPDDocument struct {
 	Data                 []*CPDRow
 	Meta                 *orderedmapjson.AnyOrderedMap
 	Version              string
-	Schemas              map[string]*orderedmapjson.AnyOrderedMap // table name -> schema
-	ArrayPromotedColumns map[string]bool                          // join table columns that should be arrays in output
+	Schemas              map[string]interface{} // table name -> JSON Schema, possibly generated from CUE
+	ArrayPromotedColumns map[string]bool        // join table columns that should be arrays in output
 }
 
 // ParseCPD parses a CPD YAML document into a CPDDocument
@@ -1028,7 +1028,7 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 			}
 			tableName := schemasNode.Content[i].Value
 			schemaNode := schemasNode.Content[i+1]
-			
+
 			isArraySchema := strings.HasSuffix(tableName, "...")
 			if isArraySchema {
 				tableName = strings.TrimSuffix(tableName, "...")
