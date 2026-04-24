@@ -1,0 +1,114 @@
+* CPD Behavior Notes
+
+** Payload column: what it does and when
+
+*** Case 1: JSONL with no join-table candidates → everything goes into payload blob
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+printf '{"name":"alice","score":95,"note":"top performer","reviewed_by":"mgr1"}
+{"name":"bob","score":82}
+{"name":"carol","score":78,"note":"needs follow-up"}' | ./cpd
+#+end_src
+
+All fields land in a single =payload= blob per row because nothing qualifies
+as a join table (no low-cardinality enum-like field).
+
+*** Case 2: Round-trip — the CPD above back to JSONL
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+cat examples/payload-demo.jsonl | ./cpd | ./cpd
+#+end_src
+
+Fields come back out unchanged regardless of whether =payload= is declared.
+
+*** Case 3: CPD file with extra fields in object rows, no payload in _columns
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+  printf '
+  _schemas:
+    data...: |
+      name: string
+      score: number
+  _columns: [name, score, payload]
+  data:
+    - [aliceiz, 985, {note: "top performer", reviewed_by: mgr1}]
+    - {name: bob, score: 82}
+    - [charlie, 15]
+  ' | ./cpd
+#+end_src
+
+#+RESULTS:
+: {"name":"aliceiz","score":985,"note":"top performer","reviewed_by":"mgr1"}
+: {"name":"bob","score":82}
+: {"name":"charlie","score":15}
+
+Extra fields (=note=, =reviewed_by=) pass through to the output row even
+without a =payload= column declared.
+
+*** Case 4: Same CPD but with payload declared in _columns
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+printf '_columns: [name, score, payload]
+data:
+  - {name: alice, score: 95, note: "top performer", reviewed_by: mgr1}
+  - {name: bob, score: 82}
+' | ./cpd
+#+end_src
+
+Output is identical to Case 3. In the CPD→JSONL direction, declaring =payload=
+makes no observable difference — extra fields always pass through.
+
+*** Case 5: The meaningful case — join table + payload remainder
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+printf '{"name":"alice","status":"ok","note":"top performer","reviewed_by":"mgr1"}
+{"name":"bob","status":"fail"}' | ./cpd -join-tables status
+#+end_src
+
+With a join table forced, =status= becomes a compact integer reference and
+everything else (=name=, =note=, =reviewed_by=) lands in the =payload= blob.
+This is the case where =payload= is meaningful: it holds the non-join-table
+remainder when there are structured columns alongside it.
+
+** Splat column syntax: =...= vs =...name= vs legacy =payload=
+
+All three forms are equivalent. =...= (bare) is the preferred syntax going forward.
+Auto-generated CPD (JSONL → CPD) now emits =...= rather than =payload=.
+
+*** Bare splat
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+printf '_columns: [name, score, ...]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+' | ./cpd
+#+end_src
+
+*** Named splat (cosmetic — name never appears in output)
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+printf '_columns: [name, score, ...extras]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+' | ./cpd
+#+end_src
+
+*** Legacy name (backward compat)
+
+#+begin_src sh :results output :dir ~/cloudsync/main/devsync/yayamdb
+printf '_columns: [name, score, payload]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+' | ./cpd
+#+end_src
+
+** Summary
+
+| Direction    | splat declared?   | Extra fields                                      |
+|--------------+-------------------+---------------------------------------------------|
+| JSONL → CPD  | auto-added as ... | all fields land in the splat blob per row         |
+| CPD → JSONL  | yes               | extra fields pass through to output row           |
+| CPD → JSONL  | no                | extra fields also pass through (same result)      |
+
+The splat column is only meaningfully distinct when combined with join tables:
+it holds the non-join-table remainder when there are structured columns alongside it.

@@ -1646,7 +1646,7 @@ func TestJSONLToCPD_RealWorldExample(t *testing.T) {
 {"time": "2019-03-14 10:51:05+0800", "photo": ["20190314_105058.jpg"], "category": "foobar", "device": "SM-N910C"}
 {"time": "2019-03-14 10:53:28+0800", "photo": ["20190314_105317.jpg"], "category": "ingest", "device": "SM-N910C"}`
 
-	want := `_columns: [time, category, device, payload]
+	want := `_columns: [time, category, device, "..."]
 category:
   ingest: 1
   blahblah: 2
@@ -1708,7 +1708,7 @@ func TestJSONLToCPD_PhotoFieldNotJoinTable(t *testing.T) {
 	}
 
 	// Verify that category and device ARE in the columns
-	if !strings.Contains(result, "_columns: [time, category, device, payload]") {
+	if !strings.Contains(result, `_columns: [time, category, device, "..."]`) {
 		t.Errorf("expected category and device to be join table columns")
 	}
 
@@ -1741,7 +1741,7 @@ func TestJSONLToCPD_JoinTableModes(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Contains(t, cpd, "category:")
 		assert.Contains(t, cpd, "device:")
-		assert.Contains(t, cpd, "_columns: [timestamp, category, device, payload]")
+		assert.Contains(t, cpd, `_columns: [timestamp, category, device, "..."]`)
 	})
 
 	t.Run("user-supplied join tables", func(t *testing.T) {
@@ -1752,7 +1752,7 @@ func TestJSONLToCPD_JoinTableModes(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotContains(t, cpd, "category:\n")
 		assert.Contains(t, cpd, "device:")
-		assert.Contains(t, cpd, "_columns: [timestamp, device, payload]")
+		assert.Contains(t, cpd, `_columns: [timestamp, device, "..."]`)
 	})
 }
 
@@ -2806,11 +2806,56 @@ func TestCustomPayloadColumn(t *testing.T) {
 		map[string]map[string]int{"known": {}},
 	)
 	assert.NoError(t, err)
-	assert.Contains(t, result, "_extra", "custom PayloadColumn must appear in _columns")
+	// Auto-add always emits "..." regardless of PayloadColumn; PayloadColumn is for reading existing files
+	assert.Contains(t, result, `"..."`, "splat column must appear in _columns")
 	assert.NotContains(t, result, "- payload", "default 'payload' column must not appear")
 
 	// Round-trip
 	jsonl, err := CPDToJSONLUnified(strings.NewReader(result))
 	assert.NoError(t, err)
 	assert.Contains(t, jsonl, `"name":"alice"`)
+}
+
+func TestSplatColumnSyntax(t *testing.T) {
+	const wantJSON = `{"name":"alice","score":95,"note":"top","reviewed_by":"mgr1"}`
+
+	forms := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "bare splat",
+			input: "_columns: [name, score, ...]\ndata:\n  - [alice, 95, {note: top, reviewed_by: mgr1}]\n",
+		},
+		{
+			name:  "named splat",
+			input: "_columns: [name, score, ...extras]\ndata:\n  - [alice, 95, {note: top, reviewed_by: mgr1}]\n",
+		},
+		{
+			name:  "legacy payload name",
+			input: "_columns: [name, score, payload]\ndata:\n  - [alice, 95, {note: top, reviewed_by: mgr1}]\n",
+		},
+	}
+
+	for _, tt := range forms {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := CPDToJSONLUnified(strings.NewReader(tt.input))
+			assert.NoError(t, err)
+			assert.Equal(t, wantJSON+"\n", out)
+		})
+	}
+
+	t.Run("jsonl to cpd auto-adds splat", func(t *testing.T) {
+		input := `{"name":"alice","score":95,"note":"top","reviewed_by":"mgr1"}`
+		result, err := JSONLToCPD(strings.NewReader(input))
+		assert.NoError(t, err)
+		assert.Contains(t, result, `"..."`, "auto-generated CPD must use ... splat syntax")
+		assert.NotContains(t, result, "payload", "auto-generated CPD must not use legacy payload name")
+
+		// Round-trip
+		jsonl, err := CPDToJSONLUnified(strings.NewReader(result))
+		assert.NoError(t, err)
+		assert.Contains(t, jsonl, `"name":"alice"`)
+		assert.Contains(t, jsonl, `"note":"top"`)
+	})
 }

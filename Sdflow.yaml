@@ -2,7 +2,6 @@ build:
   in:
     - main.go
     - embed.go
-    - cue_demo_stub.go
     - version.go
   out: ./cpd
   run: go build -o $out $in
