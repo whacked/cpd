@@ -1,0 +1,9 @@
+_columns: [created_at, sensor, ...]
+sensor:
+  alpha: 1
+  beta: 2
+data:
+  - ["2024-01-01T10:00:00Z", 1, {status: "ok", value: 22.5}]
+  - ["2024-01-01T10:01:00Z", 1, {status: "ok", value: 23.0}]
+  - ["2024-01-01T10:02:00Z", 2, {status: "fail", value: 19.8}]
+  - ["2024-01-01T10:03:00Z", 2, {status: "warn", value: 20.0}]

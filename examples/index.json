@@ -45,6 +45,14 @@
       "output_format": "jsonl"
     },
     {
+      "name": "time-column-ordering",
+      "description": "Non-default time columns are pinned first in _columns when named via -time-columns. Here 'created_at' is declared as the time column.",
+      "input": "time-column-demo.jsonl",
+      "expected": "expected/time-column-demo.cpd.yaml",
+      "output_format": "yaml",
+      "flags": ["-time-columns", "created_at"]
+    },
+    {
       "name": "legacy-payload-flattening",
       "description": "The legacy payload column name remains a splat alias and flattens object fields.",
       "input": "legacy-payload.cpd.yaml",
