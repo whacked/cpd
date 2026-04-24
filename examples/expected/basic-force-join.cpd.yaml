@@ -1,0 +1,17 @@
+_columns: [status, ...]
+status:
+  ok: 1
+  fail: 2
+  warn: 3
+  unknown: 4
+data:
+  - [1, {name: "alpha-1", temperature: 22.5}]
+  - [1, {name: "alpha-2", temperature: 23.0}]
+  - [2, {name: "beta-1", temperature: 19.8}]
+  - [3, {temperature: 20.0, name: "beta-2"}]
+  - [1, {temperature: 21.0, name: "gamma-1"}]
+  - [2, {name: "gamma-2", temperature: null}]
+  - [3, {name: "delta-1", temperature: 18.4}]
+  - [4, {name: "epsilon-1", temperature: 17.0}]
+  - [~, {name: "zeta-1", temperature: 22.0}]
+  - [~, {name: "eta-1", temperature: 25.0}]

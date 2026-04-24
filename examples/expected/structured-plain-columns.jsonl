@@ -1,0 +1,4 @@
+{"name":{"what":"hello"},"score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}
+{"name":"alice","score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}
+{"name":"alice","score":[1,2,3],"blah":{"note":"top","reviewed_by":"mgr1"}}
+{"name":{"what":"thing"},"score":[1,{"two":2},[3]],"blah":{"note":"top","reviewed_by":"mgr1"}}

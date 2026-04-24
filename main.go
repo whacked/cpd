@@ -20,6 +20,7 @@ var (
 	showVersion    bool
 	showExamples   bool
 	showGenDocs    bool
+	showGenOrg     bool
 	sqlMode        bool
 	joinTables     string
 	timeColumns    string
@@ -169,6 +170,7 @@ func printUsage() {
 	fmt.Println("  -h, --help           Show help information")
 	fmt.Println("  --examples           Show example I/O with live conversion output")
 	fmt.Println("  --gen-docs           Output Markdown documentation for README autogeneration")
+	fmt.Println("  --gen-org            Output Org documentation from embedded examples")
 	fmt.Println("  -V, --version        Show version information")
 	fmt.Println("  -v, --verbose        Verbose output")
 	fmt.Println("  -vvv                 Extra verbose output")
@@ -180,7 +182,7 @@ func printUsage() {
 	fmt.Println("  -time-columns LIST   Comma-separated time column candidates (default: time,timestamp)")
 	fmt.Println("  -data-columns LIST   Comma-separated fields to extract as columns (no join table)")
 	fmt.Println("  -data-key NAME       Override main data section key (default: data)")
-	fmt.Println("  -payload-column NAME Override catch-all payload column name (default: payload)")
+	fmt.Println("  -payload-column NAME Override catch-all splat column name (default: ...; e.g. ..., ...extra, payload)")
 	fmt.Println("  -despace             Remove spaces after commas in data rows for compact output")
 	fmt.Println()
 	fmt.Println("Stdin examples:")
@@ -209,6 +211,9 @@ func parseFlags() {
 			i++
 		case arg == "--gen-docs":
 			showGenDocs = true
+			i++
+		case arg == "--gen-org":
+			showGenOrg = true
 			i++
 		case arg == "-V" || arg == "--version":
 			showVersion = true
@@ -302,7 +307,6 @@ func parseFlags() {
 	}
 }
 
-
 func main() {
 	// Parse custom flags first
 	parseFlags()
@@ -325,6 +329,11 @@ func main() {
 
 	if showGenDocs {
 		printGenDocs()
+		return
+	}
+
+	if showGenOrg {
+		printGenOrg()
 		return
 	}
 

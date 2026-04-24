@@ -22,6 +22,7 @@ type ExampleEntry struct {
 	Name         string   `json:"name"`
 	Description  string   `json:"description"`
 	Input        string   `json:"input"`
+	Expected     string   `json:"expected"`
 	OutputFormat string   `json:"output_format"`
 	Flags        []string `json:"flags"`
 }
@@ -230,6 +231,54 @@ func printGenDocs() {
 	}
 }
 
+func printGenOrg() {
+	idx, err := loadExamplesIndex()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading examples: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("* CPD Behavior Notes")
+	fmt.Println()
+	fmt.Println("This file is generated from embedded examples by =cpd --gen-org=.")
+	fmt.Println("Run an example shell block with =C-c C-c= from the repository root.")
+	fmt.Println()
+
+	for _, ex := range idx.Examples {
+		blockName := orgBlockName(ex.Name)
+		fmt.Printf("** %s\n\n", ex.Name)
+		fmt.Printf("%s\n\n", ex.Description)
+
+		inputData, err := examplesFS.ReadFile("examples/" + ex.Input)
+		if err != nil {
+			fmt.Printf("Error reading input: %v\n\n", err)
+			continue
+		}
+
+		cliInvocation := "cat - | ./cpd"
+		if len(ex.Flags) > 0 {
+			cliInvocation += " " + strings.Join(ex.Flags, " ")
+		}
+
+		fmt.Printf("*** Input\n\n")
+		fmt.Printf("#+NAME: %s-input\n", blockName)
+		fmt.Printf("#+begin_example\n%s#+end_example\n\n", string(inputData))
+
+		output, err := runExample(ex, inputData)
+		if err != nil {
+			fmt.Printf("Conversion error: %v\n\n", err)
+			continue
+		}
+
+		fmt.Printf("*** Run\n\n")
+		fmt.Printf("#+begin_src sh :stdin %s-input :results output :dir .\n%s\n#+end_src\n\n", blockName, cliInvocation)
+
+		fmt.Printf("*** Expected Output: =%s=\n\n", ex.OutputFormat)
+		fmt.Printf("#+NAME: %s-expected\n", blockName)
+		fmt.Printf("#+begin_example\n%s#+end_example\n\n", output)
+	}
+}
+
 func langForFormat(format string) string {
 	switch format {
 	case "yaml":
@@ -241,4 +290,25 @@ func langForFormat(format string) string {
 	default:
 		return ""
 	}
+}
+
+func orgBlockName(name string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "example"
+	}
+	return out
 }

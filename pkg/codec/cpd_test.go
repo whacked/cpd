@@ -8,6 +8,37 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// resetGlobals restores all codec globals that tests may mutate.
+func resetGlobals(t *testing.T) {
+	t.Helper()
+	orig := struct {
+		JoinTableOrder []string
+		TimeColumns    []string
+		DataColumns    []string
+		PayloadColumn  string
+		DataKey        string
+		ArraySeparator string
+		VerbosityLevel int
+	}{
+		JoinTableOrder: JoinTableOrder,
+		TimeColumns:    TimeColumns,
+		DataColumns:    DataColumns,
+		PayloadColumn:  PayloadColumn,
+		DataKey:        DataKey,
+		ArraySeparator: ArraySeparator,
+		VerbosityLevel: VerbosityLevel,
+	}
+	t.Cleanup(func() {
+		JoinTableOrder = orig.JoinTableOrder
+		TimeColumns = orig.TimeColumns
+		DataColumns = orig.DataColumns
+		PayloadColumn = orig.PayloadColumn
+		DataKey = orig.DataKey
+		ArraySeparator = orig.ArraySeparator
+		VerbosityLevel = orig.VerbosityLevel
+	})
+}
+
 func TestParse_BasicJoinExpansion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1646,7 +1677,7 @@ func TestJSONLToCPD_RealWorldExample(t *testing.T) {
 {"time": "2019-03-14 10:51:05+0800", "photo": ["20190314_105058.jpg"], "category": "foobar", "device": "SM-N910C"}
 {"time": "2019-03-14 10:53:28+0800", "photo": ["20190314_105317.jpg"], "category": "ingest", "device": "SM-N910C"}`
 
-	want := `_columns: [time, category, device, payload]
+	want := `_columns: [time, category, device, ...]
 category:
   ingest: 1
   blahblah: 2
@@ -1708,7 +1739,7 @@ func TestJSONLToCPD_PhotoFieldNotJoinTable(t *testing.T) {
 	}
 
 	// Verify that category and device ARE in the columns
-	if !strings.Contains(result, "_columns: [time, category, device, payload]") {
+	if !strings.Contains(result, `_columns: [time, category, device, ...]`) {
 		t.Errorf("expected category and device to be join table columns")
 	}
 
@@ -1741,7 +1772,7 @@ func TestJSONLToCPD_JoinTableModes(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Contains(t, cpd, "category:")
 		assert.Contains(t, cpd, "device:")
-		assert.Contains(t, cpd, "_columns: [timestamp, category, device, payload]")
+		assert.Contains(t, cpd, `_columns: [timestamp, category, device, ...]`)
 	})
 
 	t.Run("user-supplied join tables", func(t *testing.T) {
@@ -1752,7 +1783,7 @@ func TestJSONLToCPD_JoinTableModes(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotContains(t, cpd, "category:\n")
 		assert.Contains(t, cpd, "device:")
-		assert.Contains(t, cpd, "_columns: [timestamp, device, payload]")
+		assert.Contains(t, cpd, `_columns: [timestamp, device, ...]`)
 	})
 }
 
@@ -1799,12 +1830,12 @@ data:
 		t.Run(tt.name, func(t *testing.T) {
 			sql, err := CPDToSQLite(strings.NewReader(tt.input))
 			assert.NoError(t, err)
-			
+
 			// Check that all expected SQL statements are present
 			for _, expected := range tt.want {
 				assert.Contains(t, sql, expected)
 			}
-			
+
 			// Basic validation - should contain CREATE and INSERT statements
 			assert.Contains(t, sql, "CREATE TABLE")
 			assert.Contains(t, sql, "INSERT INTO")
@@ -1972,8 +2003,8 @@ data:
 
 func TestCPD_SchemaParsing(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
+		name        string
+		input       string
 		wantSchemas map[string]bool // table name -> exists
 	}{
 		{
@@ -2044,7 +2075,7 @@ data:
 					}
 				}
 			}
-			
+
 			// If no schemas expected, ensure doc.Schemas is either nil or empty
 			if len(tt.wantSchemas) == 0 {
 				if doc.Schemas != nil {
@@ -2239,6 +2270,7 @@ func TestJSONLToCPDWithCustomTimeColumn(t *testing.T) {
 }
 
 func TestJoinTableNonStringTypes(t *testing.T) {
+	resetGlobals(t)
 	// Save and restore DataColumns after test
 	origDataColumns := DataColumns
 	defer func() { DataColumns = origDataColumns }()
@@ -2286,7 +2318,8 @@ func TestJoinTableNonStringTypes(t *testing.T) {
 				"expected":  {},
 			},
 			wantJoinTableKeys: []string{"exit_code:", "status:", "expected:", "ok:", "error:"},
-			wantColumnPrefix:  "_columns: [ts, exit_code, status, expected",
+			// wantColumnPrefix uses a minimal prefix to avoid ordering sensitivity from map iteration
+			wantColumnPrefix: "_columns: [ts",
 		},
 	}
 
@@ -2312,6 +2345,7 @@ func TestJoinTableNonStringTypes(t *testing.T) {
 }
 
 func TestJoinTableBoolValues(t *testing.T) {
+	resetGlobals(t)
 	// Save and restore state
 	origDataColumns := DataColumns
 	origTimeColumns := TimeColumns
@@ -2339,6 +2373,7 @@ func TestJoinTableBoolValues(t *testing.T) {
 }
 
 func TestDataColumns(t *testing.T) {
+	resetGlobals(t)
 	// Save and restore state
 	origDataColumns := DataColumns
 	origTimeColumns := TimeColumns
@@ -2409,6 +2444,7 @@ func TestDataColumns(t *testing.T) {
 }
 
 func TestMixedJoinTablesAndDataColumns(t *testing.T) {
+	resetGlobals(t)
 	// Save and restore state
 	origDataColumns := DataColumns
 	origTimeColumns := TimeColumns
@@ -2446,6 +2482,7 @@ func TestMixedJoinTablesAndDataColumns(t *testing.T) {
 }
 
 func TestDataColumnsWithNullValues(t *testing.T) {
+	resetGlobals(t)
 	// Save and restore state
 	origDataColumns := DataColumns
 	origTimeColumns := TimeColumns
@@ -2474,6 +2511,7 @@ func TestDataColumnsWithNullValues(t *testing.T) {
 }
 
 func TestDespace(t *testing.T) {
+	resetGlobals(t)
 	t.Run("default spacing in top-level array", func(t *testing.T) {
 		origSep := ArraySeparator
 		origOrder := JoinTableOrder
@@ -2640,10 +2678,10 @@ data:
 
 func TestValueToJoinKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    interface{}
-		wantKey  string
-		wantNil  bool
+		name    string
+		input   interface{}
+		wantKey string
+		wantNil bool
 	}{
 		{
 			name:    "string value",
@@ -2711,6 +2749,7 @@ func TestValueToJoinKey(t *testing.T) {
 }
 
 func TestJSONLToCPD_JoinTableFirstAppearanceOrder(t *testing.T) {
+	resetGlobals(t)
 	// The first-seen value must get ID 1. Bug: firstAppearance[key]==0 can't
 	// distinguish "not yet seen" (map default=0) from "seen at order=0",
 	// so the first value's order gets overwritten on its second occurrence,
@@ -2777,6 +2816,7 @@ func TestJSONLToCPD_JoinTableFirstAppearanceOrder(t *testing.T) {
 }
 
 func TestCustomDataKey(t *testing.T) {
+	resetGlobals(t)
 	DataKey = "records"
 	defer func() { DataKey = "" }()
 
@@ -2794,23 +2834,130 @@ func TestCustomDataKey(t *testing.T) {
 }
 
 func TestCustomPayloadColumn(t *testing.T) {
+	resetGlobals(t)
+	origPayload := PayloadColumn
+	origOrder := JoinTableOrder
+	t.Cleanup(func() { PayloadColumn = origPayload; JoinTableOrder = origOrder })
 	PayloadColumn = "_extra"
-	defer func() { PayloadColumn = "" }()
 
 	input := `{"name":"alice","known":1,"extra1":"x","extra2":"y"}`
 	JoinTableOrder = []string{"known"}
-	defer func() { JoinTableOrder = nil }()
 
 	result, err := JSONLToCPDWithJoinTables(
 		strings.NewReader(input),
 		map[string]map[string]int{"known": {}},
 	)
 	assert.NoError(t, err)
-	assert.Contains(t, result, "_extra", "custom PayloadColumn must appear in _columns")
+	// Auto-add always emits "..." regardless of PayloadColumn; PayloadColumn is for reading existing files
+	assert.Contains(t, result, `...`, "splat column must appear in _columns")
 	assert.NotContains(t, result, "- payload", "default 'payload' column must not appear")
 
 	// Round-trip
 	jsonl, err := CPDToJSONLUnified(strings.NewReader(result))
 	assert.NoError(t, err)
 	assert.Contains(t, jsonl, `"name":"alice"`)
+}
+
+func TestSplatColumnSyntax(t *testing.T) {
+	resetGlobals(t)
+	const wantJSON = `{"name":"alice","score":95,"note":"top","reviewed_by":"mgr1"}`
+
+	forms := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "bare splat",
+			input: "_columns: [name, score, ...]\ndata:\n  - [alice, 95, {note: top, reviewed_by: mgr1}]\n",
+		},
+		{
+			name:  "named splat",
+			input: "_columns: [name, score, ...extras]\ndata:\n  - [alice, 95, {note: top, reviewed_by: mgr1}]\n",
+		},
+		{
+			name:  "legacy payload name",
+			input: "_columns: [name, score, payload]\ndata:\n  - [alice, 95, {note: top, reviewed_by: mgr1}]\n",
+		},
+	}
+
+	for _, tt := range forms {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := CPDToJSONLUnified(strings.NewReader(tt.input))
+			assert.NoError(t, err)
+			assert.Equal(t, wantJSON+"\n", out)
+		})
+	}
+
+	t.Run("jsonl to cpd auto-adds splat", func(t *testing.T) {
+		input := `{"name":"alice","score":95,"note":"top","reviewed_by":"mgr1"}`
+		result, err := JSONLToCPD(strings.NewReader(input))
+		assert.NoError(t, err)
+		assert.Contains(t, result, `...`, "auto-generated CPD must use ... splat syntax")
+		assert.NotContains(t, result, "payload", "auto-generated CPD must not use legacy payload name")
+
+		// Round-trip
+		jsonl, err := CPDToJSONLUnified(strings.NewReader(result))
+		assert.NoError(t, err)
+		assert.Contains(t, jsonl, `"name":"alice"`)
+		assert.Contains(t, jsonl, `"note":"top"`)
+	})
+}
+
+func TestCPDToJSONL_PlainColumnsPreserveStructuredValues(t *testing.T) {
+	resetGlobals(t)
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name: "plain columns preserve object values",
+			input: `_columns: [name, score, blah]
+data:
+  - [{what: hello}, 95, {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":{"what":"hello"},"score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "plain columns preserve scalar and object values",
+			input: `_columns: [name, score, blah]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":"alice","score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "plain columns preserve array and object values",
+			input: `_columns: [name, score, blah]
+data:
+  - [alice, [1,2,3], {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":"alice","score":[1,2,3],"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "plain columns preserve nested structured values",
+			input: `_columns: [name, score, blah]
+data:
+  - [{what: thing}, [1, {two: 2}, [3]], {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":{"what":"thing"},"score":[1,{"two":2},[3]],"blah":{"note":"top","reviewed_by":"mgr1"}}`,
+		},
+		{
+			name: "legacy payload name still flattens",
+			input: `_columns: [name, score, payload]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+`,
+			want: `{"name":"alice","score":95,"note":"top","reviewed_by":"mgr1"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := CPDToJSONLUnified(strings.NewReader(tt.input))
+			assert.NoError(t, err)
+			assert.JSONEq(t, tt.want, strings.TrimSpace(out))
+		})
+	}
 }

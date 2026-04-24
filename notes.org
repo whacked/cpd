@@ -1,0 +1,300 @@
+* CPD Behavior Notes
+
+This file is generated from embedded examples by =cpd --gen-org=.
+Run an example shell block with =C-c C-c= from the repository root.
+
+** jsonl-to-cpd
+
+Convert flat JSONL with enum-like fields to CPD YAML. The 'status' column is auto-promoted to a join table.
+
+*** Input
+
+#+NAME: jsonl-to-cpd-input
+#+begin_example
+{"name":"alpha-1","temperature":22.5,"status":"ok"}
+{"name":"alpha-2","temperature":23.0,"status":"ok"}
+{"name":"beta-1","status":"fail","temperature":19.8}
+{"temperature":20.0,"name":"beta-2","status":"warn"}
+{"status":"ok","temperature":21.0,"name":"gamma-1"}
+{"name":"gamma-2","temperature":null,"status":"fail"}
+{"name":"delta-1","temperature":18.4,"status":"warn"}
+{"name":"epsilon-1","temperature":17.0,"status":"unknown"}
+{"name":"zeta-1","temperature":22.0,"status":null}
+{"name":"eta-1","temperature":25.0}
+#+end_example
+
+*** Run
+
+#+begin_src sh :stdin jsonl-to-cpd-input :results output :dir .
+cat - | ./cpd
+#+end_src
+
+*** Expected Output: =yaml=
+
+#+NAME: jsonl-to-cpd-expected
+#+begin_example
+_columns: [status, ...]
+status:
+  ok: 1
+  fail: 2
+  warn: 3
+  unknown: 4
+data:
+  - [1, {name: "alpha-1", temperature: 22.5}]
+  - [1, {name: "alpha-2", temperature: 23.0}]
+  - [2, {name: "beta-1", temperature: 19.8}]
+  - [3, {temperature: 20.0, name: "beta-2"}]
+  - [1, {temperature: 21.0, name: "gamma-1"}]
+  - [2, {name: "gamma-2", temperature: null}]
+  - [3, {name: "delta-1", temperature: 18.4}]
+  - [4, {name: "epsilon-1", temperature: 17.0}]
+  - [~, {name: "zeta-1", temperature: 22.0}]
+  - [~, {name: "eta-1", temperature: 25.0}]
+#+end_example
+
+** jsonl-to-cpd-force-join
+
+Same input, but explicitly force 'status' as a join table with -join-tables.
+
+*** Input
+
+#+NAME: jsonl-to-cpd-force-join-input
+#+begin_example
+{"name":"alpha-1","temperature":22.5,"status":"ok"}
+{"name":"alpha-2","temperature":23.0,"status":"ok"}
+{"name":"beta-1","status":"fail","temperature":19.8}
+{"temperature":20.0,"name":"beta-2","status":"warn"}
+{"status":"ok","temperature":21.0,"name":"gamma-1"}
+{"name":"gamma-2","temperature":null,"status":"fail"}
+{"name":"delta-1","temperature":18.4,"status":"warn"}
+{"name":"epsilon-1","temperature":17.0,"status":"unknown"}
+{"name":"zeta-1","temperature":22.0,"status":null}
+{"name":"eta-1","temperature":25.0}
+#+end_example
+
+*** Run
+
+#+begin_src sh :stdin jsonl-to-cpd-force-join-input :results output :dir .
+cat - | ./cpd -join-tables status
+#+end_src
+
+*** Expected Output: =yaml=
+
+#+NAME: jsonl-to-cpd-force-join-expected
+#+begin_example
+_columns: [status, ...]
+status:
+  ok: 1
+  fail: 2
+  warn: 3
+  unknown: 4
+data:
+  - [1, {name: "alpha-1", temperature: 22.5}]
+  - [1, {name: "alpha-2", temperature: 23.0}]
+  - [2, {name: "beta-1", temperature: 19.8}]
+  - [3, {temperature: 20.0, name: "beta-2"}]
+  - [1, {temperature: 21.0, name: "gamma-1"}]
+  - [2, {name: "gamma-2", temperature: null}]
+  - [3, {name: "delta-1", temperature: 18.4}]
+  - [4, {name: "epsilon-1", temperature: 17.0}]
+  - [~, {name: "zeta-1", temperature: 22.0}]
+  - [~, {name: "eta-1", temperature: 25.0}]
+#+end_example
+
+** cpd-to-jsonl
+
+Expand a compacted CPD YAML (positional arrays + join tables) back to full JSONL.
+
+*** Input
+
+#+NAME: cpd-to-jsonl-input
+#+begin_example
+_schemas:
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        status:
+          type: [string, "null"]
+        time:
+          type: number
+        comment:
+          type: string
+      required: [time]
+_columns:
+- status
+- time
+- comment
+status:
+  on: 1
+  off: 2
+  standby: 3
+  error: 4
+data:
+  - [1, 1, "system initialized"]
+  - [2, 2, "manual shutdown"]
+  - [1, 3, "auto-restart triggered"]
+  - [3, 4, "awaiting input"]
+  - [2, 5, "manual shutdown"]
+  - [4, 6, "fault code 17"]
+  - [1, 7, "system idle"]
+  - [2, 8, "scheduled cycle"]
+  - [3, 9, "queued"]
+  - [null, 10, "unlogged state"]
+#+end_example
+
+*** Run
+
+#+begin_src sh :stdin cpd-to-jsonl-input :results output :dir .
+cat - | ./cpd
+#+end_src
+
+*** Expected Output: =jsonl=
+
+#+NAME: cpd-to-jsonl-expected
+#+begin_example
+{"status":"on","time":1,"comment":"system initialized"}
+{"status":"off","time":2,"comment":"manual shutdown"}
+{"status":"on","time":3,"comment":"auto-restart triggered"}
+{"status":"standby","time":4,"comment":"awaiting input"}
+{"status":"off","time":5,"comment":"manual shutdown"}
+{"status":"error","time":6,"comment":"fault code 17"}
+{"status":"on","time":7,"comment":"system idle"}
+{"status":"off","time":8,"comment":"scheduled cycle"}
+{"status":"standby","time":9,"comment":"queued"}
+{"time":10,"comment":"unlogged state"}
+#+end_example
+
+** sparse-jsonl-expand
+
+Expand sparse JSONL where _meta/_version carry-forward context across records.
+
+*** Input
+
+#+NAME: sparse-jsonl-expand-input
+#+begin_example
+{"_version":1}
+{"_meta":{"location":"lab1","device":{"id":"sensor23"}}}
+{"name":"beta-1","temperature":28.4,"status":"warn"}
+{"_meta":{"location":"lab2"}}
+{"name":"beta-2","temperature":29.1,"status":"ok"}
+{"name":"beta-3","temperature":27.1,"status":"ok"}
+{"_meta":{"location":"lab1","flavor":"pumpkin"}}
+{"name":"beta-4","temperature":30.7,"status":"ok"}
+{"_meta":{}}
+{"name":"beta-5","temperature":31.2,"status":"fail"}
+{"_meta":{"location":null}}
+{"name":"beta-6","temperature":25.0,"status":"warn"}
+{"_version":2}
+{"_meta":{"location":"labX","flavor":"vanilla"}}
+{"name":"beta-7","temperature":32.5,"status":"ok"}
+#+end_example
+
+*** Run
+
+#+begin_src sh :stdin sparse-jsonl-expand-input :results output :dir .
+cat - | ./cpd
+#+end_src
+
+*** Expected Output: =jsonl=
+
+#+NAME: sparse-jsonl-expand-expected
+#+begin_example
+{"_version":1,"_meta.location":"lab1","_meta.device.id":"sensor23","name":"beta-1","temperature":28.4,"status":"warn"}
+{"_version":1,"_meta.location":"lab2","_meta.device.id":"sensor23","name":"beta-2","temperature":29.1,"status":"ok"}
+{"_version":1,"_meta.location":"lab2","_meta.device.id":"sensor23","name":"beta-3","temperature":27.1,"status":"ok"}
+{"_version":1,"_meta.location":"lab1","_meta.device.id":"sensor23","_meta.flavor":"pumpkin","name":"beta-4","temperature":30.7,"status":"ok"}
+{"_version":1,"_meta.location":"lab1","_meta.device.id":"sensor23","_meta.flavor":"pumpkin","name":"beta-5","temperature":31.2,"status":"fail"}
+{"_version":1,"_meta.location":null,"_meta.device.id":"sensor23","_meta.flavor":"pumpkin","name":"beta-6","temperature":25.0,"status":"warn"}
+{"_version":2,"_meta.location":"labX","_meta.device.id":"sensor23","_meta.flavor":"vanilla","name":"beta-7","temperature":32.5,"status":"ok"}
+#+end_example
+
+** payload-absorption
+
+Fields that don't match any join table are collected into the splat catch-all column.
+
+*** Input
+
+#+NAME: payload-absorption-input
+#+begin_example
+{"name":"alice","score":95,"note":"top performer","reviewed_by":"mgr1"}
+{"name":"bob","score":82}
+{"name":"carol","score":78,"note":"needs follow-up"}
+#+end_example
+
+*** Run
+
+#+begin_src sh :stdin payload-absorption-input :results output :dir .
+cat - | ./cpd
+#+end_src
+
+*** Expected Output: =yaml=
+
+#+NAME: payload-absorption-expected
+#+begin_example
+_columns: [...]
+data:
+  - [{name: "alice", score: 95, note: "top performer", reviewed_by: "mgr1"}]
+  - [{name: "bob", score: 82}]
+  - [{name: "carol", score: 78, note: "needs follow-up"}]
+#+end_example
+
+** structured-plain-columns
+
+Plain positional columns preserve structured object and array values; only splat columns flatten object fields.
+
+*** Input
+
+#+NAME: structured-plain-columns-input
+#+begin_example
+_columns: [name, score, blah]
+data:
+  - [{what: hello}, 95, {note: top, reviewed_by: mgr1}]
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+  - [alice, [1, 2, 3], {note: top, reviewed_by: mgr1}]
+  - [{what: thing}, [1, {two: 2}, [3]], {note: top, reviewed_by: mgr1}]
+#+end_example
+
+*** Run
+
+#+begin_src sh :stdin structured-plain-columns-input :results output :dir .
+cat - | ./cpd
+#+end_src
+
+*** Expected Output: =jsonl=
+
+#+NAME: structured-plain-columns-expected
+#+begin_example
+{"name":{"what":"hello"},"score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}
+{"name":"alice","score":95,"blah":{"note":"top","reviewed_by":"mgr1"}}
+{"name":"alice","score":[1,2,3],"blah":{"note":"top","reviewed_by":"mgr1"}}
+{"name":{"what":"thing"},"score":[1,{"two":2},[3]],"blah":{"note":"top","reviewed_by":"mgr1"}}
+#+end_example
+
+** legacy-payload-flattening
+
+The legacy payload column name remains a splat alias and flattens object fields.
+
+*** Input
+
+#+NAME: legacy-payload-flattening-input
+#+begin_example
+_columns: [name, score, payload]
+data:
+  - [alice, 95, {note: top, reviewed_by: mgr1}]
+#+end_example
+
+*** Run
+
+#+begin_src sh :stdin legacy-payload-flattening-input :results output :dir .
+cat - | ./cpd
+#+end_src
+
+*** Expected Output: =jsonl=
+
+#+NAME: legacy-payload-flattening-expected
+#+begin_example
+{"name":"alice","score":95,"note":"top","reviewed_by":"mgr1"}
+#+end_example
+

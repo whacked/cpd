@@ -46,7 +46,7 @@ var DefaultDataKey = "data"
 var DataKey string
 
 // DefaultPayloadColumn is the default catch-all column name that absorbs unmatched object fields.
-var DefaultPayloadColumn = "payload"
+var DefaultPayloadColumn = "..."
 
 // PayloadColumn overrides the catch-all column name. If empty, DefaultPayloadColumn is used.
 var PayloadColumn string
@@ -110,6 +110,13 @@ func getPayloadColumn() string {
 	return DefaultPayloadColumn
 }
 
+// isSplatColumn reports whether col is the catch-all column — either the
+// legacy magic name (default: "payload") or the explicit splat syntax ("..."
+// or "...name").
+func isSplatColumn(col string) bool {
+	return col == getPayloadColumn() || strings.HasPrefix(col, "...") || col == "payload"
+}
+
 // detectTimeColumn finds the first matching time column in records.
 // It checks columns in the order specified by timeColumns and returns
 // the first one found in any record.
@@ -145,8 +152,8 @@ type CPDDocument struct {
 	Data                 []*CPDRow
 	Meta                 *orderedmapjson.AnyOrderedMap
 	Version              string
-	Schemas              map[string]interface{} // table name -> JSON Schema (AnyOrderedMap or map[string]interface{})
-	ArrayPromotedColumns map[string]bool                           // join table columns that should be arrays in output
+	Schemas              map[string]*orderedmapjson.AnyOrderedMap // table name -> schema
+	ArrayPromotedColumns map[string]bool                          // join table columns that should be arrays in output
 }
 
 // ParseCPD parses a CPD YAML document into a CPDDocument
@@ -332,110 +339,108 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 				for j := 0; j < len(rowNode.Content); j++ {
 					colName := doc.Columns[j]
 					val := rowNode.Content[j]
-				joinTable, isJoin := doc.JoinTables[colName]
-				if isJoin && joinTable == nil {
-					return nil, fmt.Errorf("join table not found for column %s", colName)
-				}
-
-				// Check if this is an array value - if so, we need a join table
-				if val.Kind == yaml.SequenceNode {
-					if !isJoin || joinTable == nil {
+					joinTable, isJoin := doc.JoinTables[colName]
+					if isJoin && joinTable == nil {
 						return nil, fmt.Errorf("join table not found for column %s", colName)
 					}
-					// Join column with array: must be array of int, or null
-					names := make([]string, 0, len(val.Content))
-					for _, idNode := range val.Content {
-						if idNode.Tag == "!!null" || idNode.Value == "null" {
-							// Skip null values in array instead of erroring
-							continue
-						}
-						if idNode.Kind != yaml.ScalarNode {
-							return nil, fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", j, colName)
-						}
-						id, err := strconv.Atoi(idNode.Value)
-						if err != nil {
-							return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", j, colName, idNode.Value)
-						}
-						name, ok := joinTable.IDToName[id]
-						if !ok {
-							return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", j, colName, id)
-						}
-						names = append(names, name)
-					}
-					cpdRow.Values.Set(colName, names)
-				} else if isJoin && joinTable != nil {
-					// Join column with scalar: must be int or null
-					switch val.Kind {
-					case yaml.ScalarNode:
-						if val.Tag == "!!null" || val.Value == "null" {
-							// Null join: skip
-							continue
-						}
-						id, err := strconv.Atoi(val.Value)
-						if err != nil {
-							return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", j, colName, val.Value)
-						}
-						name, ok := joinTable.IDToName[id]
-						if !ok {
-							return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", j, colName, id)
-						}
-						cpdRow.Values.Set(colName, name)
-					default:
-						return nil, fmt.Errorf("invalid join ID in row %d column %s: invalid type", j, colName)
-					}
-				} else if colName == getPayloadColumn() {
-					// Handle payload specially
-					switch val.Kind {
-					case yaml.MappingNode:
-						payloadMap := orderedmapjson.NewAnyOrderedMap()
-						if err := yamlutil.ConvertNodeToOrderedMap(val, payloadMap); err != nil {
-							return nil, fmt.Errorf("failed to decode payload in row %d: %w", j, err)
-						}
-						// Flatten payload fields into row
-						for el := payloadMap.Front(); el != nil; el = el.Next() {
-							cpdRow.Values.Set(el.Key, el.Value)
-						}
-					case yaml.ScalarNode:
-						if val.Tag == "!!null" || val.Value == "null" {
-							continue
-						}
 
-						tryVals := []string{val.Value}
-						if len(val.Value) >= 2 && ((val.Value[0] == '"' && val.Value[len(val.Value)-1] == '"') || (val.Value[0] == '\'' && val.Value[len(val.Value)-1] == '\'')) {
-							tryVals = append(tryVals, val.Value[1:len(val.Value)-1])
+					if isJoin && joinTable != nil {
+						if val.Kind == yaml.SequenceNode {
+							// Join column with array: must be array of int, or null.
+							names := make([]string, 0, len(val.Content))
+							for _, idNode := range val.Content {
+								if idNode.Tag == "!!null" || idNode.Value == "null" {
+									// Skip null values in array instead of erroring
+									continue
+								}
+								if idNode.Kind != yaml.ScalarNode {
+									return nil, fmt.Errorf("invalid join ID in row %d column %s: non-scalar in array", j, colName)
+								}
+								id, err := strconv.Atoi(idNode.Value)
+								if err != nil {
+									return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", j, colName, idNode.Value)
+								}
+								name, ok := joinTable.IDToName[id]
+								if !ok {
+									return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", j, colName, id)
+								}
+								names = append(names, name)
+							}
+							cpdRow.Values.Set(colName, names)
+						} else {
+							// Join column with scalar: must be int or null.
+							switch val.Kind {
+							case yaml.ScalarNode:
+								if val.Tag == "!!null" || val.Value == "null" {
+									// Null join: skip
+									continue
+								}
+								id, err := strconv.Atoi(val.Value)
+								if err != nil {
+									return nil, fmt.Errorf("invalid join ID in row %d column %s: %s", j, colName, val.Value)
+								}
+								name, ok := joinTable.IDToName[id]
+								if !ok {
+									return nil, fmt.Errorf("unknown join ID in row %d column %s: %d", j, colName, id)
+								}
+								cpdRow.Values.Set(colName, name)
+							default:
+								return nil, fmt.Errorf("invalid join ID in row %d column %s: invalid type", j, colName)
+							}
 						}
-						flattened := false
-						for _, tryVal := range tryVals {
-							trimmed := strings.TrimSpace(tryVal)
-							if len(trimmed) > 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' {
-								// Try parsing as a YAML document
-								var node yaml.Node
-								if err := yaml.Unmarshal([]byte(trimmed), &node); err == nil {
-									orderedObj := orderedmapjson.NewAnyOrderedMap()
-									if err := yamlutil.ConvertNodeToOrderedMap(&node, orderedObj); err == nil {
-										for el := orderedObj.Front(); el != nil; el = el.Next() {
-											cpdRow.Values.Set(el.Key, el.Value)
+					} else if isSplatColumn(colName) {
+						// Handle payload specially
+						switch val.Kind {
+						case yaml.MappingNode:
+							payloadMap := orderedmapjson.NewAnyOrderedMap()
+							if err := yamlutil.ConvertNodeToOrderedMap(val, payloadMap); err != nil {
+								return nil, fmt.Errorf("failed to decode payload in row %d: %w", j, err)
+							}
+							// Flatten payload fields into row
+							for el := payloadMap.Front(); el != nil; el = el.Next() {
+								cpdRow.Values.Set(el.Key, el.Value)
+							}
+						case yaml.ScalarNode:
+							if val.Tag == "!!null" || val.Value == "null" {
+								continue
+							}
+
+							tryVals := []string{val.Value}
+							if len(val.Value) >= 2 && ((val.Value[0] == '"' && val.Value[len(val.Value)-1] == '"') || (val.Value[0] == '\'' && val.Value[len(val.Value)-1] == '\'')) {
+								tryVals = append(tryVals, val.Value[1:len(val.Value)-1])
+							}
+							flattened := false
+							for _, tryVal := range tryVals {
+								trimmed := strings.TrimSpace(tryVal)
+								if len(trimmed) > 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' {
+									// Try parsing as a YAML document
+									var node yaml.Node
+									if err := yaml.Unmarshal([]byte(trimmed), &node); err == nil {
+										orderedObj := orderedmapjson.NewAnyOrderedMap()
+										if err := yamlutil.ConvertNodeToOrderedMap(&node, orderedObj); err == nil {
+											for el := orderedObj.Front(); el != nil; el = el.Next() {
+												cpdRow.Values.Set(el.Key, el.Value)
+											}
+											flattened = true
+											break
 										}
-										flattened = true
-										break
 									}
 								}
+								if flattened {
+									break
+								}
 							}
-							if flattened {
-								break
+							if !flattened {
+								cpdRow.Values.Set(colName, val.Value)
 							}
+						default:
+							return nil, fmt.Errorf("unsupported payload node kind in row %d: %v", j, val.Kind)
 						}
-						if !flattened {
-							cpdRow.Values.Set(colName, val.Value)
-						}
-					default:
-						return nil, fmt.Errorf("unsupported payload node kind in row %d: %v", j, val.Kind)
+					} else {
+						// Regular scalar column - convert based on YAML tag
+						convertedValue := convertYAMLNodeToGoValue(val)
+						cpdRow.Values.Set(colName, convertedValue)
 					}
-				} else {
-					// Regular scalar column - convert based on YAML tag
-					convertedValue := convertYAMLNodeToGoValue(val)
-					cpdRow.Values.Set(colName, convertedValue)
-				}
 				}
 			} else if rowNode.Kind == yaml.MappingNode {
 				// Object format processing
@@ -449,7 +454,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 					var val interface{}
 					var exists bool
 
-					if colName == getPayloadColumn() {
+					if isSplatColumn(colName) {
 						// Special handling for payload column - collect unmatched fields
 						payloadMap := orderedmapjson.NewAnyOrderedMap()
 
@@ -461,7 +466,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 							// Check if this field matches any column
 							matchesColumn := false
 							for _, checkCol := range doc.Columns {
-								if checkCol == fieldName && checkCol != getPayloadColumn() {
+								if checkCol == fieldName && !isSplatColumn(checkCol) {
 									matchesColumn = true
 									break
 								}
@@ -533,7 +538,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 				// Second, add any extra fields that don't match columns (unless there's a payload column)
 				hasPayloadColumn := false
 				for _, colName := range doc.Columns {
-					if colName == getPayloadColumn() {
+					if isSplatColumn(colName) {
 						hasPayloadColumn = true
 						break
 					}
@@ -1159,12 +1164,12 @@ func parseNextDocument(scanner *bufio.Scanner, prevColumns []string, prevJoinTab
 		}
 		doc.Data = append(doc.Data, row)
 	}
-	
+
 	// Validate data against schema if present
 	if err := doc.validateDataAgainstSchema(); err != nil {
 		return nil, err
 	}
-	
+
 	return doc, nil
 }
 
@@ -1241,15 +1246,15 @@ func parseDataRow(line string, columns []string, joinTables map[string]*JoinTabl
 		if err != nil {
 			return nil, fmt.Errorf("error parsing column %s: %w", colName, err)
 		}
-		
+
 		// Debug logging
 		if colName == "temperature" {
 			if VerbosityLevel >= 3 {
 				fmt.Printf("DEBUG: %s -> valStr: %s, isJoin: %v, val: %v (type: %T)\n", colName, valStr, isJoin, val, val)
 			}
 		}
-		
-		if colName == getPayloadColumn() && val != nil {
+
+		if isSplatColumn(colName) && val != nil {
 			// Flatten payload fields
 			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
 				for el := om.Front(); el != nil; el = el.Next() {
@@ -1295,7 +1300,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 		var val interface{}
 		var exists bool
 
-		if colName == getPayloadColumn() {
+		if isSplatColumn(colName) {
 			// Special handling for payload column - collect unmatched fields
 			payloadMap := orderedmapjson.NewAnyOrderedMap()
 
@@ -1307,7 +1312,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 				// Check if this field matches any column
 				matchesColumn := false
 				for _, checkCol := range columns {
-					if checkCol == fieldName && checkCol != getPayloadColumn() {
+					if checkCol == fieldName && !isSplatColumn(checkCol) {
 						matchesColumn = true
 						break
 					}
@@ -1379,8 +1384,8 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 					val = v
 				case nil:
 					val = nil
-				case *orderedmapjson.AnyOrderedMap:
-					// Keep AnyOrderedMap as-is (for payload flattening)
+				case *orderedmapjson.AnyOrderedMap, []interface{}:
+					// Keep structured values as-is for non-join columns.
 					val = v
 				default:
 					// Convert other types to string
@@ -1390,7 +1395,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 		}
 
 		// Store the processed value
-		if colName == getPayloadColumn() && val != nil {
+		if isSplatColumn(colName) && val != nil {
 			// Flatten payload fields into the row
 			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
 				for el := om.Front(); el != nil; el = el.Next() {
@@ -1419,7 +1424,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 	// Second, add any extra fields that don't match columns (unless there's a payload column)
 	hasPayloadColumn := false
 	for _, colName := range columns {
-		if colName == getPayloadColumn() {
+		if isSplatColumn(colName) {
 			hasPayloadColumn = true
 			break
 		}
@@ -1869,8 +1874,8 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 				}
 			}
 		} else {
-			// Fallback to map iteration (non-deterministic)
-			for field := range joinTables {
+			fields := orderedJoinTableFields(joinTables, allRecords)
+			for _, field := range fields {
 				joinFields.Set(field, true)
 				columns = append(columns, field)
 			}
@@ -2013,9 +2018,9 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		}
 	}
 
-	// Add single payload column if there are non-join, non-data-column fields
+	// Add splat column if there are non-join, non-data-column fields
 	if len(allFields) > 0 {
-		columns = append(columns, getPayloadColumn())
+		columns = append(columns, "...")
 	}
 
 	// Create or use join tables for the selected fields
@@ -2171,7 +2176,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		// Handle join fields, data columns, payload, or regular fields
 		for i := colIndex; i < len(columns); i++ {
 			col := columns[i]
-			if col == getPayloadColumn() {
+			if isSplatColumn(col) {
 				// Collect all non-join, non-time, non-data-column fields into payload object
 				payloadMap := orderedmapjson.NewAnyOrderedMap()
 				for el := record.Front(); el != nil; el = el.Next() {
@@ -2357,6 +2362,40 @@ func flattenMeta(prefix string, v interface{}, out *orderedmapjson.AnyOrderedMap
 	}
 }
 
+func orderedJoinTableFields(joinTables map[string]map[string]int, records []*orderedmapjson.AnyOrderedMap) []string {
+	firstSeen := make(map[string]int)
+	order := 0
+	for _, record := range records {
+		for el := record.Front(); el != nil; el = el.Next() {
+			if _, ok := joinTables[el.Key]; !ok {
+				continue
+			}
+			if _, seen := firstSeen[el.Key]; seen {
+				continue
+			}
+			firstSeen[el.Key] = order
+			order++
+		}
+	}
+
+	fields := make([]string, 0, len(joinTables))
+	for field := range joinTables {
+		fields = append(fields, field)
+	}
+	sort.Slice(fields, func(i, j int) bool {
+		leftOrder, leftSeen := firstSeen[fields[i]]
+		rightOrder, rightSeen := firstSeen[fields[j]]
+		if leftSeen && rightSeen {
+			return leftOrder < rightOrder
+		}
+		if leftSeen != rightSeen {
+			return leftSeen
+		}
+		return fields[i] < fields[j]
+	})
+	return fields
+}
+
 // deepCopyOrderedMap creates a deep copy of an ordered map
 func deepCopyOrderedMap(src *orderedmapjson.AnyOrderedMap) *orderedmapjson.AnyOrderedMap {
 	if src == nil {
@@ -2472,26 +2511,26 @@ func CPDToSQLite(r io.Reader) (string, error) {
 
 	// Convert CPD to field info format expected by relational package
 	fieldInfo := make(map[string]*relational.FieldInfo)
-	
+
 	// Process columns and join tables
 	for _, col := range doc.Columns {
-		if col == getPayloadColumn() {
+		if isSplatColumn(col) {
 			// Skip payload - it will be stored as JSON
 			continue
 		}
-		
+
 		// Determine field category based on whether it has a join table
 		category := relational.FieldCategoryUnique
 		if _, hasJoinTable := doc.JoinTables[col]; hasJoinTable {
 			category = relational.FieldCategoryOneToMany
 		}
-		
+
 		// Determine element type - time columns are forced to string type
 		elementType := "string"
 		if isTimeColumn(col, TimeColumns) {
 			elementType = "string" // Keep as string for time columns
 		}
-		
+
 		fieldInfo[col] = &relational.FieldInfo{
 			Name:        col,
 			ElementType: elementType,
@@ -2503,19 +2542,19 @@ func CPDToSQLite(r io.Reader) (string, error) {
 
 	// Generate DDL
 	ddl := relational.GenerateSQLiteDDL(fieldInfo, getDataKey())
-	
+
 	// Convert CPD data to format expected by GenerateSQLiteInserts
 	var records []*orderedmapjson.AnyOrderedMap
 	for _, row := range doc.Data {
 		records = append(records, row.Values)
 	}
-	
+
 	// Generate INSERT statements
 	inserts, err := relational.GenerateSQLiteInserts(fieldInfo, records)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate inserts: %w", err)
 	}
-	
+
 	return ddl + "\n" + inserts, nil
 }
 
@@ -2607,37 +2646,62 @@ func (d *CPDDocument) validateDataAgainstSchema() error {
 	return nil
 }
 
-// convertYAMLNodeToGoValue converts a YAML scalar node to the appropriate Go type
+// convertYAMLNodeToGoValue converts a YAML node to the appropriate Go value.
 func convertYAMLNodeToGoValue(node *yaml.Node) interface{} {
-	if node.Kind != yaml.ScalarNode {
-		return node.Value
-	}
-	
-	switch node.Tag {
-	case "!!null":
+	if node == nil {
 		return nil
-	case "!!bool":
-		if node.Value == "true" {
-			return true
+	}
+
+	switch node.Kind {
+	case yaml.DocumentNode:
+		if len(node.Content) == 0 {
+			return nil
 		}
-		return false
-	case "!!int":
-		if i, err := strconv.Atoi(node.Value); err == nil {
-			return i
+		return convertYAMLNodeToGoValue(node.Content[0])
+	case yaml.MappingNode:
+		m := orderedmapjson.NewAnyOrderedMap()
+		for i := 0; i < len(node.Content); i += 2 {
+			if i+1 >= len(node.Content) {
+				break
+			}
+			m.Set(node.Content[i].Value, convertYAMLNodeToGoValue(node.Content[i+1]))
 		}
-		return node.Value
-	case "!!float":
-		if f, err := strconv.ParseFloat(node.Value, 64); err == nil {
-			return f
+		return m
+	case yaml.SequenceNode:
+		values := make([]interface{}, 0, len(node.Content))
+		for _, child := range node.Content {
+			values = append(values, convertYAMLNodeToGoValue(child))
 		}
-		return node.Value
-	case "!!str":
-		return node.Value
+		return values
+	case yaml.ScalarNode:
+		switch node.Tag {
+		case "!!null":
+			return nil
+		case "!!bool":
+			if node.Value == "true" {
+				return true
+			}
+			return false
+		case "!!int":
+			if i, err := strconv.Atoi(node.Value); err == nil {
+				return i
+			}
+			return node.Value
+		case "!!float":
+			if f, err := strconv.ParseFloat(node.Value, 64); err == nil {
+				return f
+			}
+			return node.Value
+		case "!!str":
+			return node.Value
+		default:
+			// For unknown tags, try to parse as number first, then default to string
+			if f, err := strconv.ParseFloat(node.Value, 64); err == nil {
+				return f
+			}
+			return node.Value
+		}
 	default:
-		// For unknown tags, try to parse as number first, then default to string
-		if f, err := strconv.ParseFloat(node.Value, 64); err == nil {
-			return f
-		}
 		return node.Value
 	}
 }
@@ -2653,6 +2717,11 @@ func formatYAMLKey(key string) string {
 	switch key {
 	case "null", "true", "false", "yes", "no", "on", "off", "y", "n":
 		return fmt.Sprintf("%q", key)
+	}
+
+	// Splat columns ("..." or "...name") are safe unquoted inside flow sequences.
+	if strings.HasPrefix(key, "...") {
+		return key
 	}
 
 	// Check for special characters that require quoting
