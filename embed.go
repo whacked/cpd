@@ -87,6 +87,11 @@ func runExample(e ExampleEntry, inputContent []byte) (string, error) {
 				i++
 				exJoinTables = e.Flags[i]
 			}
+		case "-time-columns":
+			if i+1 < len(e.Flags) {
+				i++
+				codec.TimeColumns = strings.Split(e.Flags[i], ",")
+			}
 		}
 	}
 
