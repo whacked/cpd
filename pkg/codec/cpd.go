@@ -46,7 +46,7 @@ var DefaultDataKey = "data"
 var DataKey string
 
 // DefaultPayloadColumn is the default catch-all column name that absorbs unmatched object fields.
-var DefaultPayloadColumn = "payload"
+var DefaultPayloadColumn = "..."
 
 // PayloadColumn overrides the catch-all column name. If empty, DefaultPayloadColumn is used.
 var PayloadColumn string
@@ -108,6 +108,13 @@ func getPayloadColumn() string {
 		return PayloadColumn
 	}
 	return DefaultPayloadColumn
+}
+
+// isSplatColumn reports whether col is the catch-all column — either the
+// legacy magic name (default: "payload") or the explicit splat syntax ("..."
+// or "...name").
+func isSplatColumn(col string) bool {
+	return col == getPayloadColumn() || strings.HasPrefix(col, "...") || col == "payload"
 }
 
 // detectTimeColumn finds the first matching time column in records.
@@ -361,7 +368,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 					default:
 						return nil, fmt.Errorf("invalid join ID in row %d column %s: invalid type", j, colName)
 					}
-				} else if colName == getPayloadColumn() {
+				} else if isSplatColumn(colName) {
 					// Handle payload specially
 					switch val.Kind {
 					case yaml.MappingNode:
@@ -427,7 +434,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 					var val interface{}
 					var exists bool
 
-					if colName == getPayloadColumn() {
+					if isSplatColumn(colName) {
 						// Special handling for payload column - collect unmatched fields
 						payloadMap := orderedmapjson.NewAnyOrderedMap()
 
@@ -439,7 +446,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 							// Check if this field matches any column
 							matchesColumn := false
 							for _, checkCol := range doc.Columns {
-								if checkCol == fieldName && checkCol != getPayloadColumn() {
+								if checkCol == fieldName && !isSplatColumn(checkCol) {
 									matchesColumn = true
 									break
 								}
@@ -511,7 +518,7 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 				// Second, add any extra fields that don't match columns (unless there's a payload column)
 				hasPayloadColumn := false
 				for _, colName := range doc.Columns {
-					if colName == getPayloadColumn() {
+					if isSplatColumn(colName) {
 						hasPayloadColumn = true
 						break
 					}
@@ -1205,7 +1212,7 @@ func parseDataRow(line string, columns []string, joinTables map[string]*JoinTabl
 			}
 		}
 		
-		if colName == getPayloadColumn() && val != nil {
+		if isSplatColumn(colName) && val != nil {
 			// Flatten payload fields
 			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
 				for el := om.Front(); el != nil; el = el.Next() {
@@ -1251,7 +1258,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 		var val interface{}
 		var exists bool
 
-		if colName == getPayloadColumn() {
+		if isSplatColumn(colName) {
 			// Special handling for payload column - collect unmatched fields
 			payloadMap := orderedmapjson.NewAnyOrderedMap()
 
@@ -1263,7 +1270,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 				// Check if this field matches any column
 				matchesColumn := false
 				for _, checkCol := range columns {
-					if checkCol == fieldName && checkCol != getPayloadColumn() {
+					if checkCol == fieldName && !isSplatColumn(checkCol) {
 						matchesColumn = true
 						break
 					}
@@ -1346,7 +1353,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 		}
 
 		// Store the processed value
-		if colName == getPayloadColumn() && val != nil {
+		if isSplatColumn(colName) && val != nil {
 			// Flatten payload fields into the row
 			if om, ok := val.(*orderedmapjson.AnyOrderedMap); ok {
 				for el := om.Front(); el != nil; el = el.Next() {
@@ -1375,7 +1382,7 @@ func parseObjectRow(line string, columns []string, joinTables map[string]*JoinTa
 	// Second, add any extra fields that don't match columns (unless there's a payload column)
 	hasPayloadColumn := false
 	for _, colName := range columns {
-		if colName == getPayloadColumn() {
+		if isSplatColumn(colName) {
 			hasPayloadColumn = true
 			break
 		}
@@ -1969,9 +1976,9 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		}
 	}
 
-	// Add single payload column if there are non-join, non-data-column fields
+	// Add splat column if there are non-join, non-data-column fields
 	if len(allFields) > 0 {
-		columns = append(columns, getPayloadColumn())
+		columns = append(columns, "...")
 	}
 
 	// Create or use join tables for the selected fields
@@ -2127,7 +2134,7 @@ func JSONLToCPDWithJoinTables(r io.Reader, joinTables map[string]map[string]int)
 		// Handle join fields, data columns, payload, or regular fields
 		for i := colIndex; i < len(columns); i++ {
 			col := columns[i]
-			if col == getPayloadColumn() {
+			if isSplatColumn(col) {
 				// Collect all non-join, non-time, non-data-column fields into payload object
 				payloadMap := orderedmapjson.NewAnyOrderedMap()
 				for el := record.Front(); el != nil; el = el.Next() {
@@ -2431,7 +2438,7 @@ func CPDToSQLite(r io.Reader) (string, error) {
 	
 	// Process columns and join tables
 	for _, col := range doc.Columns {
-		if col == getPayloadColumn() {
+		if isSplatColumn(col) {
 			// Skip payload - it will be stored as JSON
 			continue
 		}
