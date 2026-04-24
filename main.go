@@ -149,7 +149,7 @@ func isSparseJSONL(data string) bool {
 }
 
 func printUsage() {
-	fmt.Println("cpd - CommonPayloadData toolkit")
+	fmt.Println("cpd - CommonPayloadData toolkit" + buildVariant)
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  cpd [flags] <file>")

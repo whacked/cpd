@@ -2,4 +2,6 @@
 
 package main
 
+const buildVariant = ""
+
 func printCUESchemaExamples() {}

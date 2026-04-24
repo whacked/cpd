@@ -12,6 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const buildVariant = "+cue"
+
 // cueExpandToYAML expands a CUE schema string to a JSON Schema rendered as YAML.
 func cueExpandToYAML(src string) (string, error) {
 	schema, err := codec.ExpandCUESchema(src)
