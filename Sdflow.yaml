@@ -2,9 +2,10 @@ build:
   in:
     - main.go
     - embed.go
+    - cue_demo_stub.go
     - version.go
   out: ./cpd
-  run: go build -o $out $in
+  run: go build -o $out .
 
 build-with-cue:
   in:
@@ -13,7 +14,7 @@ build-with-cue:
     - cue_demo.go
     - version.go
   out: ./cpd
-  run: go build -tags cue -o $out $in
+  run: go build -tags cue -o $out .
 
 version.go:
   in: Sdflow.yaml
