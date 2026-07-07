@@ -134,6 +134,47 @@ convert yaml to sqlite database
 convert sqlite database to yayamdb
 
 
+# VisiData integration
+
+CPD files can be opened directly in [VisiData](https://visidata.org/). The
+loader shells out to `cpd` to expand the file to JSONL, so what you see is the
+same data `cpd file.cpd.yaml` produces — join tables resolved, `...` splat and
+`_meta`/`_version` carry-forward expanded. The Go codec stays the single source
+of truth; there is no second decoder to keep in sync.
+
+## install
+
+The Nix build ships the loader beside the binary:
+
+    <prefix>/bin/cpd
+    <prefix>/share/visidata/vdcpd.py
+    <prefix>/share/visidata/visidatarc.example
+
+`nix profile install .#cpd` puts `cpd` on PATH and the loader under
+`~/.nix-profile/share/visidata/`; `nix build .#cpd` puts them under `./result/`.
+
+## enable
+
+Add the shipped snippet (see `share/visidata/visidatarc.example`) to your
+`~/.visidatarc` — one `sys.path` line plus an import:
+
+    import sys, os
+    sys.path.insert(0, os.path.expanduser('~/.nix-profile/share/visidata'))
+    import vdcpd
+
+Adjust the path to match where you installed `cpd` (it depends on the install
+method). The loader finds the `cpd` binary install-relative to itself, then on
+PATH; override with `options.cpd_path` if needed.
+
+## use
+
+    vd data.cpd.yaml        # auto-detected and expanded
+    vd -f cpd weird.yml     # force the CPD loader on any file
+
+Plain YAML is unaffected: the loader only claims `*.cpd.yaml`/`*.cpd.yml` and
+(unless `options.cpd_sniff` is disabled) YAML whose content has a top-level
+`_columns:` marker.
+
 # also see
 
 - [gnu recutils](https://labs.tomasino.org/gnu-recutils/)

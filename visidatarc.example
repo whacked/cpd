@@ -1,0 +1,25 @@
+# --- CPD (CommonPayloadData) loader for VisiData ---------------------------
+#
+# Append this to your ~/.visidatarc to make `vd file.cpd.yaml` open the
+# expanded data (via the `cpd` binary) instead of the raw compact YAML.
+#
+# The only per-machine detail is WHERE cpd was installed: pick the sys.path
+# line that matches, so Python can find vdcpd.py (shipped next to the binary).
+
+import sys, os
+
+# nix profile install  (cpd on PATH via ~/.nix-profile/bin):
+sys.path.insert(0, os.path.expanduser('~/.nix-profile/share/visidata'))
+
+# nix build            (result symlink in the repo):
+# sys.path.insert(0, os.path.abspath('result/share/visidata'))
+
+# custom prefix / future `make install`:
+# sys.path.insert(0, '/usr/local/share/visidata')
+
+import vdcpd
+
+# Optional overrides (usually unnecessary — vdcpd finds cpd install-relative
+# to itself, then on PATH):
+#   options.cpd_path = os.path.expanduser('~/.nix-profile/bin/cpd')
+#   options.cpd_sniff = False   # only auto-open by *.cpd.yaml filename

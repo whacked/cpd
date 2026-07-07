@@ -26,5 +26,11 @@ buildGoApplication {
   doCheck = false;
   postInstall = ''
     mv $out/bin/yamdb $out/bin/cpd
+
+    # Ship the VisiData loader beside the binary. Layout: <prefix>/bin/cpd and
+    # <prefix>/share/visidata/vdcpd.py, so vdcpd finds cpd install-relative
+    # (../../bin/cpd) and a later make/sdflow install target can reuse it.
+    install -Dm644 vdcpd.py $out/share/visidata/vdcpd.py
+    install -Dm644 visidatarc.example $out/share/visidata/visidatarc.example
   '';
 }
