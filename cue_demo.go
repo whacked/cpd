@@ -92,6 +92,12 @@ func printCUESchemaExamples() {
 	fmt.Println("When a `_schemas` value is a YAML block scalar (string), it is parsed as CUE")
 	fmt.Println("and converted to JSON Schema before validation. Requires `-tags cue` build.")
 	fmt.Println()
+	fmt.Println("**Braceless by default.** A CUE block scalar is implicitly a top-level struct,")
+	fmt.Println("so the outermost `{ }` are optional — write fields directly (`id: int`). Braces")
+	fmt.Println("are required in exactly one place: a struct nested inside an array keeps them")
+	fmt.Println("(`[...{...}]`). For an array of records, prefer the `data...:` key suffix with a")
+	fmt.Println("braceless object over writing the top-level spread by hand.")
+	fmt.Println()
 
 	for _, ex := range codec.CUESchemaExamples {
 		out := cueDemoSection(ex)

@@ -1,4 +1,2 @@
-{
-	id:   int
-	name: string
-}
+id:   int
+name: string

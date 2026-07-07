@@ -1,13 +1,14 @@
-_columns:
-  - id
-  - name
+_columns: [status, ...]
 _schemas:
   data...: |
-    {
-      id:   int
-      name: string
-    }
+    status: "ok" | "fail" | "warn" | null
+    name:   string
+    temperature?: number | null
+status:
+  ok: 1
+  fail: 2
+  warn: 3
 data:
-  - [1, "alice"]
-  - [2, "bob"]
-  - [3, "carol"]
+  - [1, {name: "alpha-1", temperature: 22.5}]
+  - [2, {name: "beta-1", temperature: null}]
+  - [3, {name: "gamma-1", temperature: 19.0}]

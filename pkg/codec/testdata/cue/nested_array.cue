@@ -1,4 +1,2 @@
-{
-	id:   int
-	tags: [...string]
-}
+id:   int
+tags: [...string]

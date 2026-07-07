@@ -19,13 +19,8 @@ type CUESchemaExample struct {
 var CUESchemaExamples = []CUESchemaExample{
 	{
 		Name:        "simple-object",
-		Description: "Basic object schema: all fields required, plain types.",
+		Description: "Basic object schema: all fields required, plain types. The outermost braces are **optional** — a CUE block scalar is implicitly a top-level struct, so `id: int` on its own line is a complete schema. Prefer this braceless form.",
 		Filename:    "testdata/cue/simple_object.cue",
-	},
-	{
-		Name:        "array-of-objects",
-		Description: "Array of objects using CUE's spread syntax `[...{...}]`. Use `data...:` as the table key to apply this as an array schema without wrapping.",
-		Filename:    "testdata/cue/array_of_objects.cue",
 	},
 	{
 		Name:        "optional-field",
@@ -36,5 +31,15 @@ var CUESchemaExamples = []CUESchemaExample{
 		Name:        "nested-array",
 		Description: "Nested array field: `tags: [...string]` produces an `items: {type: string}` array schema inline.",
 		Filename:    "testdata/cue/nested_array.cue",
+	},
+	{
+		Name:        "record-with-enum",
+		Description: "Where CUE earns its keep as a JSON Schema shorthand: an enum via disjunction (`\"ok\" | \"fail\"`), a nullable field (`... | null`), and an optional nullable number. Braceless top-level, as usual.",
+		Filename:    "testdata/cue/record_with_enum.cue",
+	},
+	{
+		Name:        "array-of-objects",
+		Description: "The one place braces are **required**: a struct nested inside an array keeps its braces (`[...{...}]`). Dropping them is a CUE parse error. In practice, prefer the `data...:` key suffix with a braceless object (see the array shorthand section below) instead of writing this top-level spread by hand.",
+		Filename:    "testdata/cue/array_of_objects.cue",
 	},
 }
