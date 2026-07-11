@@ -193,6 +193,13 @@ func ParseCPD(r io.Reader) (*CPDDocument, error) {
 		doc.Version = versionNode.Value
 	}
 
+	// Parse meta
+	if metaNode := findNodeByKey(root, "_meta"); metaNode != nil {
+		if err := yamlutil.ConvertNodeToOrderedMap(metaNode, doc.Meta); err != nil {
+			return nil, fmt.Errorf("failed to convert _meta: %w", err)
+		}
+	}
+
 	// Parse schemas
 	if schemasNode := findNodeByKey(root, "_schemas"); schemasNode != nil {
 		if schemasNode.Kind != yaml.MappingNode {
@@ -762,8 +769,20 @@ func CPDToJSONLUnified(r io.Reader) (string, error) {
 		return "", fmt.Errorf("failed to read input: %w", err)
 	}
 
+	// Multi-document streams need carry-forward state (_meta, _columns,
+	// join tables) across documents; ParseCPD only reads the first
+	// document, so route them through the streaming parser instead.
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var first yaml.Node
+	if err := dec.Decode(&first); err == nil {
+		var second yaml.Node
+		if err := dec.Decode(&second); err != io.EOF {
+			return CPDToJSONL(bytes.NewReader(data))
+		}
+	}
+
 	// First, try parsing as a structured YAML document
-	doc, err := ParseCPD(strings.NewReader(string(data)))
+	doc, err := ParseCPD(bytes.NewReader(data))
 	if err == nil {
 		// Skip schema validation for now to focus on mixed format support
 		// TODO: Fix schema validation to handle null values properly
@@ -772,7 +791,7 @@ func CPDToJSONLUnified(r io.Reader) (string, error) {
 	}
 
 	// If structured parsing failed, fall back to line-by-line parsing
-	return CPDToJSONL(strings.NewReader(string(data)))
+	return CPDToJSONL(bytes.NewReader(data))
 }
 
 // CPDToParquet converts a CPD YAML file to Parquet format
