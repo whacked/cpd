@@ -345,6 +345,13 @@ func main() {
 
 	if len(os.Args) < 2 {
 		// No file argument, read from stdin
+		if stat, statErr := os.Stdin.Stat(); statErr == nil && stat.Mode()&os.ModeCharDevice != 0 {
+			// Interactive terminal with nothing piped in: show usage
+			// instead of blocking on stdin
+			printUsage()
+			return
+		}
+
 		if verbosityLevel > 0 {
 			fmt.Fprintf(os.Stderr, "Reading from stdin...\n")
 		}
